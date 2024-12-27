@@ -11,7 +11,9 @@ This repository contains a Python-based preprocessing pipeline for extracting an
   - [Processing a Batch of Files](#processing-a-batch-of-files)
 - [Directory Structure](#directory-structure)
 - [Configuration Files](#configuration-files)
+<!--
 - [Contributing](#contributing)
+-->
 - [License](#license)
 
 ---
@@ -110,11 +112,6 @@ Here is the recommended directory structure for the project:
 ```
 preprocessing_peyrache_lab/
 │
-├── data/                         # Directory for raw data files
-│   ├── session1.nwb
-│   ├── session2.nwb
-│   └── session3.nwb
-│
 ├── configs/                      # Directory for configuration files
 │   └── B2904.yaml
 │
@@ -151,6 +148,8 @@ steps:
 Store these files in the `configs/` directory.
 
 ---
+<!-- This section is hidden and will not appear in the rendered README
+This text will not be shown in the rendered README.
 
 ## Contributing
 
@@ -171,6 +170,7 @@ We welcome contributions to improve this project! To contribute:
    ```
 5. Create a pull request.
 
+-->
 ---
 
 ## License
