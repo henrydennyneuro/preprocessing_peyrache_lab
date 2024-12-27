@@ -1,0 +1,37 @@
+# Example YAML configuration file for PreprocessingPipeline
+# This file specifies which files to process and which preprocessing steps to execute.
+
+
+# Possible preprocessing steps:
+
+#   - extract_inter_spike_intervals  # Extract inter-spike intervals
+#   - extract_hd_tuning_parameters  # Compute head direction tuning parameters
+#   - detect_oscillations           # Detect oscillatory events in the LFP
+#   - extract_waveform_parameters   # Extract waveform parameters
+
+# You must include the name as part of a hyphenated list under the "steps:" list. 
+
+steps:
+  - extract_inter_spike_intervals 
+  - extract_hd_tuning_parameters  
+  - detect_oscillations           
+  - extract_waveform_parameters   
+
+# List target folders below. These should be recordings that contain at least 1 shank in putative TRN.
+
+files:
+  - D:/Electrophysiology/B3200/B3208/B3208-240608
+  - D:/Electrophysiology/B3200/B3208/B3208-240609
+  - D:/Electrophysiology/B3200/B3208/B3208-240610
+  - D:/Electrophysiology/B3200/B3208/B3208-240612
+  - D:/Electrophysiology/B3200/B3208/B3208-240613
+  - D:/Electrophysiology/B3200/B3208/B3208-240615/B3208-240615
+  - D:/Electrophysiology/B3200/B3208/B3208-240619
+  - D:/Electrophysiology/B3200/B3208/B3208-240620
+  - D:/Electrophysiology/B2900/B2904/B2904-230621
+  - D:/Electrophysiology/B2900/B2904/B2904-230627
+  - D:/Electrophysiology/B2900/B2904/B2904-230628
+  - D:/Electrophysiology/B2900/B2904/B2904-230629
+  - D:/Electrophysiology/B2900/B2904/B2904-230703
+  - D:/Electrophysiology/B2900/B2904/B2904-230704
+  - D:/Electrophysiology/B2900/B2904/B2904-230706
