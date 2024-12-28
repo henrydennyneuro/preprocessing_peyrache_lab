@@ -97,23 +97,26 @@ class PreprocessingPipeline:
         with open(os.path.join(path_string, f"{recording_basename}_HDTuning_Curves.pkl"), "wb") as file:
             pickle.dump(smooth_tuning_curves, file)
 
-    def detect_oscillations(self, data, path_string, recording_basename, oscillation_type="ripple"):
+    def detect_oscillatory_events(self, lfp, epoch, freq_band, thres_band, duration_band, min_inter_duration):
         """Detect oscillatory events in the LFP."""
-        frequency = 1250
-        sws_ep = data.epochs['Sleep']
+        lfp = lfp.restrict(epoch)
+        signal = self.bandpass_filter(lfp.as_units('s').values, freq_band[0], freq_band[1], lfp.rate)
+        squared_signal = np.square(signal)  # Direct access to the array
+        window = np.ones(51) / 51
+        filtered_signal = filtfilt(window, 1, squared_signal)
+        normalized_signal = (filtered_signal - np.mean(filtered_signal)) / np.std(filtered_signal)
 
-        if oscillation_type == 'ripple':
-            params = {'freq_band': (100, 300), 'thres_band': (7, 10), 'duration_band': (0.01, 0.1), 'min_inter_duration': 0.02}
-        elif oscillation_type == 'spindle':
-            params = {'freq_band': (10, 16), 'thres_band': (0.25, 20), 'duration_band': (0.4, 2.1), 'min_inter_duration': 0.02}
-        else:
-            raise ValueError("Unsupported oscillation type")
+        nSS = nap.Tsd(
+            t=lfp.as_units('s').index.values, 
+            d=normalized_signal, 
+            time_support=epoch
+        )
+        osc_ep = nSS.threshold(thres_band[0], method='above').threshold(thres_band[1], method='below').time_support
+        osc_ep = osc_ep.drop_short_intervals(duration_band[0], time_units='s').drop_long_intervals(duration_band[1], time_units='s')
+        osc_ep = osc_ep.merge_close_intervals(min_inter_duration, time_units='s')
 
-        lfp = data.load_lfp(channel=0, extension='.eeg', frequency=frequency)
-        osc_ep, osc_tsd = self.detect_oscillatory_events(lfp, sws_ep, **params)
+        return osc_ep, nSS
 
-        osc_tsd.save(os.path.join(path_string, f"{recording_basename}_{oscillation_type}_tsd"))
-        osc_ep.save(os.path.join(path_string, f"{recording_basename}_{oscillation_type}_ep"))
 
     def extract_waveform_parameters(self, data, path_string, recording_basename):
         """Extract waveform parameters for all neurons."""
@@ -171,21 +174,88 @@ class PreprocessingPipeline:
             new_tuning_curves[i] = smoothed.loc[tcurves.index]
         return pd.DataFrame.from_dict(new_tuning_curves)
 
-    def detect_oscillatory_events(self, lfp, epoch, freq_band, thres_band, duration_band, min_inter_duration):
-        """Detect oscillatory events in the LFP."""
-        lfp = lfp.restrict(epoch)
-        signal = self.bandpass_filter(lfp, freq_band[0], freq_band[1], lfp.rate)
-        squared_signal = np.square(signal.values)
-        window = np.ones(51) / 51
-        filtered_signal = filtfilt(window, 1, squared_signal)
-        normalized_signal = (filtered_signal - np.mean(filtered_signal)) / np.std(filtered_signal)
+    def detect_oscillatory_events(self, data_path, epoch):
+        """
+        Detect oscillatory events in the LFP using metadata files for oscillation-specific analysis.
+        
+        Parameters:
+        - data_path: Path to the data folder containing metadata and LFP files.
+        - epoch: Epoch to restrict the LFP.
+        """
+        # Step 1: Check for .txt metadata files
+        metadata_files = [f for f in os.listdir(data_path) if f.endswith("_channel.txt")]
+        if not metadata_files:
+            print(f"No metadata files found in {data_path}. Skipping oscillation detection.")
+            return
 
-        nSS = nap.Tsd(t=lfp.index.values, d=normalized_signal, time_support=epoch)
-        osc_ep = nSS.threshold(thres_band[0], method='above').threshold(thres_band[1], method='below').time_support
-        osc_ep = osc_ep.drop_short_intervals(duration_band[0], time_units='s').drop_long_intervals(duration_band[1], time_units='s')
-        osc_ep = osc_ep.merge_close_intervals(min_inter_duration, time_units='s')
+        # Step 2: Iterate through metadata files for each oscillation type
+        for metadata_file in metadata_files:
+            # Parse the oscillation type from the metadata filename
+            filename_parts = metadata_file.split("_")
+            if len(filename_parts) < 2 or not filename_parts[1].startswith("channel.txt"):
+                print(f"Invalid metadata file format: {metadata_file}. Skipping.")
+                continue
 
-        return osc_ep, nSS
+            oscillation_type = filename_parts[0].lower()  # Extract oscillation type (e.g., "ripple", "spindle")
+            print(f"Processing oscillation type: {oscillation_type}")
+
+            # Load the channel number from the metadata file
+            metadata_path = os.path.join(data_path, metadata_file)
+            try:
+                with open(metadata_path, "r") as file:
+                    channel = int(file.read().strip())
+            except ValueError:
+                print(f"Invalid channel number in {metadata_file}. Skipping this file.")
+                continue
+
+            # Step 3: Load analysis parameters based on oscillation type
+            if oscillation_type == "ripple":
+                params = {
+                    "freq_band": (100, 300),
+                    "thres_band": (7, 10),
+                    "duration_band": (0.01, 0.1),
+                    "min_inter_duration": 0.02,
+                }
+            elif oscillation_type == "spindle":
+                params = {
+                    "freq_band": (10, 16),
+                    "thres_band": (0.25, 20),
+                    "duration_band": (0.4, 2.1),
+                    "min_inter_duration": 0.02,
+                }
+            else:
+                print(f"Unsupported oscillation type: {oscillation_type}. Skipping this file.")
+                continue
+
+            # Step 4: Load the LFP for the specified channel
+            try:
+                lfp = data.load_lfp(channel=channel, extension=".eeg")
+                lfp = lfp.restrict(epoch)
+            except Exception as e:
+                print(f"Error loading LFP for channel {channel} in {metadata_file}: {e}")
+                continue
+
+            # Step 5: Perform oscillation detection
+            print(f"Performing {oscillation_type} analysis on channel {channel}...")
+            signal = self.bandpass_filter(lfp.as_units("s").values, params["freq_band"][0], params["freq_band"][1], lfp.rate)
+            squared_signal = np.square(signal)
+            window = np.ones(51) / 51
+            filtered_signal = filtfilt(window, 1, squared_signal)
+            normalized_signal = (filtered_signal - np.mean(filtered_signal)) / np.std(filtered_signal)
+
+            nSS = nap.Tsd(
+                t=lfp.as_units("s").index.values,
+                d=normalized_signal,
+                time_support=epoch
+            )
+            osc_ep = nSS.threshold(params["thres_band"][0], method="above").threshold(params["thres_band"][1], method="below").time_support
+            osc_ep = osc_ep.drop_short_intervals(params["duration_band"][0], time_units="s").drop_long_intervals(params["duration_band"][1], time_units="s")
+            osc_ep = osc_ep.merge_close_intervals(params["min_inter_duration"], time_units="s")
+
+            # Save results
+            basename = os.path.basename(data_path)
+            osc_ep.save(os.path.join(data_path, f"{basename}_{oscillation_type}_ep"))
+            print(f"Saved {oscillation_type} intervals for channel {channel}.")
 
     def _butter_bandpass(self, lowcut, highcut, fs, order=5):
         nyq = 0.5 * fs

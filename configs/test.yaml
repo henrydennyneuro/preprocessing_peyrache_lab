@@ -1,0 +1,10 @@
+# YAML file for testing the PreprocessingPipeline on a single file
+
+steps:
+  - extract_inter_spike_intervals  # Extract inter-spike intervals
+  - extract_hd_tuning_parameters  # Compute head direction tuning parameters
+#  - detect_oscillations           # Detect oscillatory events in the LFP
+  - extract_waveform_parameters   # Extract waveform parameters
+
+files:
+  - E:\B2900\B2902\B2902-230530
