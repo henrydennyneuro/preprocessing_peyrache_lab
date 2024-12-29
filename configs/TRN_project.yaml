@@ -14,7 +14,7 @@
 steps:
   - extract_inter_spike_intervals 
   - extract_hd_tuning_parameters  
-  - detect_oscillations           
+#  - detect_oscillations           
   - extract_waveform_parameters   
 
 # List target folders below. These should be recordings that contain at least 1 shank in putative TRN.
@@ -45,7 +45,7 @@ files:
   - E:/B3200/B3208/B3208-240609
   - E:/B3200/B3208/B3208-240610
   - E:/B3200/B3208/B3208-240612
-  - E:/B3200/B3208/B3208-240613
+  #- E:/B3200/B3208/B3208-240613
   #- E:/B3200/B3208/B3208-240615/B3208-240615
   #- E:/B3200/B3208/B3208-240619
   - E:/B3200/B3208/B3208-240620
@@ -59,7 +59,7 @@ files:
   - E:/B2900/B2904/B2904-230706
 
   - E:/B2900/B2902/B2902-230530
-  - E:/B2900/B2902/B2902-230531
+  #- E:/B2900/B2902/B2902-230531 # Missing analogin
   - E:/B2900/B2902/B2902-230601
   - E:/B2900/B2902/B2902-230602
-  - E:/B2900/B2902/B2902-230605
+  #- E:/B2900/B2902/B2902-230605 # Missing analogin
