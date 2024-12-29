@@ -74,28 +74,60 @@ class PreprocessingPipeline:
             pickle.dump([median_isis, median_sleep_isis], file)
 
     def extract_hd_tuning_parameters(self, data, path_string, recording_basename):
-        """Extract head direction tuning parameters."""
+        """
+        Extract head direction tuning parameters, cross-validate using halves and alternating bins.
+        """
+        # Load data
         spikes = data.spikes
         position = data.position
         wake_ep = data.epochs['Wake'].intersect(position.time_support)
 
+        # Compute tuning curves for the entire session
         tuning_curves = nap.compute_1d_tuning_curves(
             group=spikes,
             feature=position['ry'],
             ep=wake_ep,
             nb_bins=120,
-            minmax=(0, 2 * np.pi),
+            minmax=(0, 2 * np.pi)
         )
         smooth_tuning_curves = self.smooth_angular_tuning_curves(tuning_curves)
-        mean_vector, mean_vector_length, R_value, preferred_direction = self.calculate_rayleigh_vector(
-            smooth_tuning_curves
+
+        # Cross-validate with session halves
+        tuning_curves_1st_half, tuning_curves_2nd_half, smooth_tuning_curves_1st_half, smooth_tuning_curves_2nd_half = self.cross_validate_tuning_curves(
+            wake_ep, position, spikes
         )
 
-        with open(os.path.join(path_string, f"{recording_basename}_HDTuning_Properties.pkl"), "wb") as file:
-            pickle.dump([mean_vector, mean_vector_length, R_value, preferred_direction], file)
+        # Cross-validate with alternating bins
+        tuning_curves_odd_bins, tuning_curves_even_bins, smooth_tuning_curves_odd_bins, smooth_tuning_curves_even_bins = self.cross_validate_alternating_bins(
+            wake_ep, position, spikes
+        )
 
-        with open(os.path.join(path_string, f"{recording_basename}_HDTuning_Curves.pkl"), "wb") as file:
-            pickle.dump(smooth_tuning_curves, file)
+        # Calculate Rayleigh properties
+        mean_vector, mean_vector_length, R_value, preferred_direction = self.calculate_rayleigh_vector(smooth_tuning_curves)
+
+        # Compute spatial information
+        spatial_information = nap.compute_1d_mutual_info(smooth_tuning_curves, spikes.restrict(wake_ep).to_tsd()).to_numpy()
+
+        # Save HD tuning properties
+        with open(os.path.join(path_string, f"{recording_basename}_HDtuning_properties.pkl"), 'wb') as file:
+            pickle.dump([mean_vector, mean_vector_length, R_value, preferred_direction, spatial_information], file)
+
+        # Save HD tuning curves
+        with open(os.path.join(path_string, f"{recording_basename}_HDtuning_curves.pkl"), 'wb') as file:
+            pickle.dump([
+                tuning_curves,
+                smooth_tuning_curves,
+                tuning_curves_1st_half,
+                tuning_curves_2nd_half,
+                smooth_tuning_curves_1st_half,
+                smooth_tuning_curves_2nd_half,
+                tuning_curves_odd_bins,
+                tuning_curves_even_bins,
+                smooth_tuning_curves_odd_bins,
+                smooth_tuning_curves_even_bins
+            ], file)
+
+        print(f"HD tuning properties and curves for {recording_basename} saved.")
 
     def detect_oscillatory_events(self, lfp, epoch, freq_band, thres_band, duration_band, min_inter_duration):
         """Detect oscillatory events in the LFP."""
@@ -173,6 +205,81 @@ class PreprocessingPipeline:
             smoothed = padded.rolling(window=window, win_type="gaussian", center=True, min_periods=1).mean(std=deviation)
             new_tuning_curves[i] = smoothed.loc[tcurves.index]
         return pd.DataFrame.from_dict(new_tuning_curves)
+
+    def cross_validate_tuning_curves(self, wake_ep, position, spikes):
+        """
+        Cross-validate tuning curves by splitting the wake epoch into two halves.
+        """
+        wake_ep_center = (wake_ep['end'] - wake_ep['start']) / 2
+        sub_wake_ep_1 = nap.IntervalSet(
+            start=wake_ep['start'], end=wake_ep['start'] + wake_ep_center, time_units="s"
+        ).intersect(position.time_support)
+        sub_wake_ep_2 = nap.IntervalSet(
+            start=wake_ep['start'] + wake_ep_center, end=wake_ep['end'], time_units="s"
+        ).intersect(position.time_support)
+
+        tuning_curves_1 = nap.compute_1d_tuning_curves(
+            group=spikes,
+            feature=position['ry'],
+            ep=sub_wake_ep_1,
+            nb_bins=120,
+            minmax=(0, 2 * np.pi),
+        )
+        tuning_curves_2 = nap.compute_1d_tuning_curves(
+            group=spikes,
+            feature=position['ry'],
+            ep=sub_wake_ep_2,
+            nb_bins=120,
+            minmax=(0, 2 * np.pi),
+        )
+
+        smooth_tuning_curves_1 = self.smooth_angular_tuning_curves(tuning_curves_1)
+        smooth_tuning_curves_2 = self.smooth_angular_tuning_curves(tuning_curves_2)
+
+        return tuning_curves_1, tuning_curves_2, smooth_tuning_curves_1, smooth_tuning_curves_2
+
+    def cross_validate_alternating_bins(self, wake_ep, position, spikes, bin_duration=10):
+        """
+        Cross-validate tuning curves by splitting the wake epoch into alternating bins.
+        """
+        # Generate bins using Pynapple IntervalSet
+        start_time = wake_ep.start[0]  # Access the first value directly
+        end_time = wake_ep.end[-1]     # Access the last value directly
+
+        bin_edges = np.arange(start_time, end_time, bin_duration)
+        bin_intervals = nap.IntervalSet(start=bin_edges[:-1], end=bin_edges[1:], time_units="s")
+
+        # Separate odd and even bins
+        odd_bins = bin_intervals[np.arange(0, len(bin_intervals), 2)]
+        even_bins = bin_intervals[np.arange(1, len(bin_intervals), 2)]
+
+        # Restrict bins to the position's time support
+        odd_bins = odd_bins.intersect(position.time_support)
+        even_bins = even_bins.intersect(position.time_support)
+
+        # Compute tuning curves for odd bins
+        tuning_curves_odd = nap.compute_1d_tuning_curves(
+            group=spikes,
+            feature=position['ry'],
+            ep=odd_bins,
+            nb_bins=120,
+            minmax=(0, 2 * np.pi),
+        )
+
+        # Compute tuning curves for even bins
+        tuning_curves_even = nap.compute_1d_tuning_curves(
+            group=spikes,
+            feature=position['ry'],
+            ep=even_bins,
+            nb_bins=120,
+            minmax=(0, 2 * np.pi),
+        )
+
+        # Smooth tuning curves
+        smooth_tuning_curves_odd = self.smooth_angular_tuning_curves(tuning_curves_odd)
+        smooth_tuning_curves_even = self.smooth_angular_tuning_curves(tuning_curves_even)
+
+        return tuning_curves_odd, tuning_curves_even, smooth_tuning_curves_odd, smooth_tuning_curves_even
 
     def detect_oscillatory_events(self, data_path, epoch):
         """
