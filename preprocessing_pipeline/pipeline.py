@@ -1,4 +1,5 @@
 import os
+import yaml
 import pickle
 import json
 import numpy as np
@@ -7,15 +8,12 @@ import pynapple as nap
 import nwbmatic as ntm
 from pathlib import Path
 from scipy.signal import butter, lfilter, filtfilt
-import yaml
-
+from scipy.optimize import curve_fit
 
 class PreprocessingPipeline:
-    def __init__(self, data_directory):
-        """Initialize the preprocessing pipeline with the path to the data directory."""
-        self.data_directory = Path(data_directory)
-        if not self.data_directory.exists():
-            raise ValueError(f"Directory {data_directory} does not exist.")
+    def __init__(self):
+        """Initialize the preprocessing pipeline without assuming a fixed data directory."""
+        pass
 
     def load_yaml_config(self, config_path):
         """Load the YAML configuration file specifying files and steps."""
@@ -29,13 +27,13 @@ class PreprocessingPipeline:
         """Process files and steps specified in a YAML configuration."""
         files, steps = self.load_yaml_config(config_path)
         for file in files:
-            full_path = self.data_directory / file
+            full_path = Path(file)
             if full_path.exists():
                 print(f"Processing file: {full_path}")
                 self.process_recording(directory=full_path, steps=steps)
             else:
                 print(f"File not found: {full_path}")
-
+                
     def process_recording(self, directory, steps):
         """Main function to process a single recording with selected steps."""
         path_string = Path(directory)
@@ -82,10 +80,12 @@ class PreprocessingPipeline:
         position = data.position
         wake_ep = data.epochs['Wake'].intersect(position.time_support)
 
+        feature = position['ry']
+
         # Compute tuning curves for the entire session
         tuning_curves = nap.compute_1d_tuning_curves(
             group=spikes,
-            feature=position['ry'],
+            feature=feature,
             ep=wake_ep,
             nb_bins=120,
             minmax=(0, 2 * np.pi)
@@ -94,12 +94,12 @@ class PreprocessingPipeline:
 
         # Cross-validate with session halves
         tuning_curves_1st_half, tuning_curves_2nd_half, smooth_tuning_curves_1st_half, smooth_tuning_curves_2nd_half = self.cross_validate_tuning_curves(
-            wake_ep, position, spikes
+            wake_ep, feature, spikes, position
         )
 
         # Cross-validate with alternating bins
         tuning_curves_odd_bins, tuning_curves_even_bins, smooth_tuning_curves_odd_bins, smooth_tuning_curves_even_bins = self.cross_validate_alternating_bins(
-            wake_ep, position, spikes
+            wake_ep, feature, spikes, position
         )
 
         # Calculate Rayleigh properties
@@ -108,9 +108,13 @@ class PreprocessingPipeline:
         # Compute spatial information
         spatial_information = nap.compute_1d_mutual_info(smooth_tuning_curves, spikes.restrict(wake_ep).to_tsd()).to_numpy()
 
+        # Compute explained variance for each neuron
+
+        explained_variance = self.calculate_explained_variance(spikes, position, wake_ep, smooth_tuning_curves)
+
         # Save HD tuning properties
         with open(os.path.join(path_string, f"{recording_basename}_HDtuning_properties.pkl"), 'wb') as file:
-            pickle.dump([mean_vector, mean_vector_length, R_value, preferred_direction, spatial_information], file)
+            pickle.dump([mean_vector, mean_vector_length, R_value, preferred_direction, spatial_information, explained_variance], file)
 
         # Save HD tuning curves
         with open(os.path.join(path_string, f"{recording_basename}_HDtuning_curves.pkl"), 'wb') as file:
@@ -128,6 +132,58 @@ class PreprocessingPipeline:
             ], file)
 
         print(f"HD tuning properties and curves for {recording_basename} saved.")
+
+    def extract_AHV_tuning_parameters(self, data, path_string, recording_basename):
+        """Extracts and saves AHV tuning parameters, cross-validation results, and quadratic fit properties."""
+        # Load position and spikes
+        position = data.position
+        spikes = data.spikes
+        wake_ep = data.epochs['Wake'].intersect(position.time_support)
+
+        # Compute Angular Head Velocity (AHV)
+        timestamps = position.index.values
+        head_direction = position['ry'].values  # Ensure correct column name
+        dt = np.diff(timestamps)
+        circular_diff_hd = np.angle(np.exp(1j * np.diff(head_direction)))
+        ahv = circular_diff_hd / dt
+
+        # Convert to Pynapple Tsd
+        ahv_tsd = nap.Tsd(t=timestamps[1:], d=ahv)
+
+        feature = ahv_tsd
+
+        # Compute raw AHV tuning curves
+        ahv_minmax = (-50 * np.pi / 180, 50 * np.pi / 180)
+        tuning_curves = nap.compute_1d_tuning_curves(
+            group=spikes, feature=feature, ep=wake_ep, nb_bins=30, minmax=ahv_minmax
+        )
+
+        # Cross-validation
+        tuning_curves_1st_half, tuning_curves_2nd_half, _, _ = self.cross_validate_tuning_curves(
+            wake_ep, feature, spikes, position)
+        tuning_curves_odd_bins, tuning_curves_even_bins, _, _ = self.cross_validate_alternating_bins(
+            wake_ep, feature, spikes, position)
+
+        # Fit quadratic models and compute asymmetry index
+        ahv_bins = tuning_curves.index.values
+        results = []
+        
+        for neuron in tuning_curves.columns:
+            firing_rates = tuning_curves[neuron].values
+            popt, _ = curve_fit(lambda x, a, b, c: a*x**2 + b*x + c, ahv_bins, firing_rates)
+            a, b, c = popt
+
+            pos_firing = sum(firing_rates[ahv_bins > 0])
+            neg_firing = sum(firing_rates[ahv_bins < 0])
+            asymmetry_index = (pos_firing - neg_firing) / (pos_firing + neg_firing)
+            results.append([a, b, c, asymmetry_index])
+
+        # Save data
+        with open(os.path.join(path_string, f"{recording_basename}_AHV_tuning.pkl"), 'wb') as file:
+            pickle.dump([tuning_curves, tuning_curves_1st_half, tuning_curves_2nd_half, 
+                         tuning_curves_odd_bins, tuning_curves_even_bins], file)
+        with open(os.path.join(path_string, f"{recording_basename}_AHV_fit.pkl"), 'wb') as file:
+            pickle.dump(results, file)
 
     def detect_oscillatory_events(self, lfp, epoch, freq_band, thres_band, duration_band, min_inter_duration):
         """Detect oscillatory events in the LFP."""
@@ -148,7 +204,6 @@ class PreprocessingPipeline:
         osc_ep = osc_ep.merge_close_intervals(min_inter_duration, time_units='s')
 
         return osc_ep, nSS
-
 
     def extract_waveform_parameters(self, data, path_string, recording_basename):
         """Extract waveform parameters for all neurons."""
@@ -181,6 +236,94 @@ class PreprocessingPipeline:
             return np.median(isis) if len(isis) > 0 else None
         return None
 
+    def calculate_explained_variance(self, spikes, position, wake_ep, smooth_tuning_curves):
+        explained_variances = []  # List to store explained variance for all neurons
+
+        def find_firing_rate(direction, directions, firing_rates):
+            """
+            Find the firing rate corresponding to the closest head direction bin.
+
+            Parameters:
+                direction (float): The head direction in radians.
+                directions (array-like): Array of head direction bin centers.
+                firing_rates (array-like): Array of firing rates for each bin.
+
+            Returns:
+                float: The firing rate corresponding to the closest bin.
+            """
+            closest_idx = (np.abs(directions - direction)).argmin()
+            return firing_rates[closest_idx]
+
+        for neuron_id in spikes.keys():
+
+            try:
+                # Calculate spike rates
+                wake_spikes = spikes[neuron_id].restrict(wake_ep)
+                spike_rates = wake_spikes.count(bin_size=0.75, time_units='s') / 0.75
+
+                # If spike rates are empty, append NaN and continue
+                if spike_rates.values.size == 0:
+                    print(f"No spikes detected for neuron {neuron_id}. Assigning NaN...")
+                    explained_variances.append(np.nan)
+                    continue
+
+                # Bin the head direction
+                head_direction_binned = position['ry'].bin_average(bin_size=0.75, ep=wake_ep, time_units='s')
+
+                # Extract tuning curve
+                tuning_curve = smooth_tuning_curves[neuron_id]
+                directions = tuning_curve.index.values
+                firing_rates = tuning_curve.values
+
+                # Convert head direction to pandas Series
+                head_direction_binned_series = pd.Series(
+                    data=head_direction_binned.values,
+                    index=head_direction_binned.index
+                )
+
+                # Map head directions to firing rates
+                predicted_rates = head_direction_binned_series.apply(
+                    lambda direction: find_firing_rate(direction, directions, firing_rates)
+                )
+
+                # If shapes of spike_rates and predicted_spike_rate don't match, append NaN
+                if spike_rates.shape[0] != predicted_rates.shape[0]:
+                    print(f"Mismatch in spike rates and predicted rates for neuron {neuron_id}. Assigning NaN...")
+                    explained_variances.append(np.nan)
+                    continue
+
+                # Residuals
+                residuals = spike_rates.values - predicted_rates.values
+
+                # Variance calculations
+                var_residuals = np.var(residuals)
+                var_true = np.var(spike_rates.values)
+
+                # If variance of true spike rates is zero, append NaN
+                if var_true == 0:
+                    print(f"Zero variance in true spike rates for neuron {neuron_id}. Assigning NaN...")
+                    explained_variances.append(np.nan)
+                    continue
+
+                # Explained variance
+                explained_variance = 1 - (var_residuals / var_true)
+                explained_variances.append(explained_variance)
+
+            except Exception as e:
+                # Handle any unexpected errors
+                print(f"Error processing neuron {neuron_id}: {e}. Assigning NaN...")
+                explained_variances.append(np.nan)
+
+        # Count neurons with NaN explained variance
+        num_nan = np.isnan(explained_variances).sum()
+
+        # Print the count if greater than 0
+        if num_nan > 0:
+            print(f"\nWarning: {num_nan} neurons have NaN explained variance.\n")
+
+        return explained_variances
+
+
     def calculate_rayleigh_vector(self, tuning_curves):
         """Calculate Rayleigh vector properties for tuning curves."""
         complex_angles = tuning_curves.values * np.exp(1j * tuning_curves.index.to_numpy())[:, np.newaxis]
@@ -206,7 +349,7 @@ class PreprocessingPipeline:
             new_tuning_curves[i] = smoothed.loc[tcurves.index]
         return pd.DataFrame.from_dict(new_tuning_curves)
 
-    def cross_validate_tuning_curves(self, wake_ep, position, spikes):
+    def cross_validate_tuning_curves(self, wake_ep, feature, spikes, position):
         """
         Cross-validate tuning curves by splitting the wake epoch into two halves.
         """
@@ -220,14 +363,14 @@ class PreprocessingPipeline:
 
         tuning_curves_1 = nap.compute_1d_tuning_curves(
             group=spikes,
-            feature=position['ry'],
+            feature=feature,
             ep=sub_wake_ep_1,
             nb_bins=120,
             minmax=(0, 2 * np.pi),
         )
         tuning_curves_2 = nap.compute_1d_tuning_curves(
             group=spikes,
-            feature=position['ry'],
+            feature=feature,
             ep=sub_wake_ep_2,
             nb_bins=120,
             minmax=(0, 2 * np.pi),
@@ -238,7 +381,7 @@ class PreprocessingPipeline:
 
         return tuning_curves_1, tuning_curves_2, smooth_tuning_curves_1, smooth_tuning_curves_2
 
-    def cross_validate_alternating_bins(self, wake_ep, position, spikes, bin_duration=10):
+    def cross_validate_alternating_bins(self, wake_ep, feature, spikes, position, bin_duration=10):
         """
         Cross-validate tuning curves by splitting the wake epoch into alternating bins.
         """
@@ -260,7 +403,7 @@ class PreprocessingPipeline:
         # Compute tuning curves for odd bins
         tuning_curves_odd = nap.compute_1d_tuning_curves(
             group=spikes,
-            feature=position['ry'],
+            feature=feature,
             ep=odd_bins,
             nb_bins=120,
             minmax=(0, 2 * np.pi),
@@ -269,7 +412,7 @@ class PreprocessingPipeline:
         # Compute tuning curves for even bins
         tuning_curves_even = nap.compute_1d_tuning_curves(
             group=spikes,
-            feature=position['ry'],
+            feature=feature,
             ep=even_bins,
             nb_bins=120,
             minmax=(0, 2 * np.pi),

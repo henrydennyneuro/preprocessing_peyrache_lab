@@ -8,14 +8,16 @@
 #   - extract_hd_tuning_parameters  # Compute head direction tuning parameters
 #   - detect_oscillations           # Detect oscillatory events in the LFP
 #   - extract_waveform_parameters   # Extract waveform parameters
+#   - extract_AHV_tuning_parameters # extract information about neuron tuning to head turns
 
 # You must include the name as part of a hyphenated list under the "steps:" list. 
 
 steps:
-  - extract_inter_spike_intervals 
+#  - extract_inter_spike_intervals 
   - extract_hd_tuning_parameters  
 #  - detect_oscillations           
-  - extract_waveform_parameters   
+#  - extract_waveform_parameters
+  - extract_AHV_tuning_parameters
 
 # List target folders below. These should be recordings that contain at least 1 shank in putative TRN.
 

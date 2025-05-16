@@ -1,0 +1,77 @@
+import os
+from pathlib import Path
+import yaml
+import numpy as np
+import matplotlib.pyplot as plt
+import pynapple as nap
+
+# Load YAML configuration file
+yaml_file = r"C:\Users\Henry Denny\TRNPhysiology\configs\TRN_project.yaml"
+with open(yaml_file, "r") as file:
+    config = yaml.safe_load(file)
+
+# Extract directory and file list
+data_directory = config.get("data_directory", "")
+datasets = config.get("files", [])
+
+# Check if datasets exist
+if not datasets:
+    print("No datasets found in the YAML file. Exiting.")
+    exit()
+
+# Process the first dataset (modify to loop through all datasets if needed)
+dataset = datasets[0]  # Select the first dataset
+directory = os.path.join(data_directory, dataset)
+path_string = Path(directory)
+recording_basename = os.path.basename(directory)
+
+print(f"Processing recording: {recording_basename}")
+
+# Load session data
+data = nap.load_session(directory, "neurosuite")  # Adjust the loader as needed for your format
+
+# Extract position and spikes data
+position = data.position  # Ensure this is a nap.TsdFrame
+spikes = data.spikes      # Ensure this is a nap.TsGroup
+
+# Define the epoch of interest (e.g., waking state)
+wake_ep = data.epochs["wake"]  # Replace "wake" with the appropriate key for your wake epochs
+
+# Extract head direction (in radians)
+head_direction = position["ry"].values  # Replace 'ry' with the correct column for head direction in radians
+
+# Extract timestamps
+timestamps = position.index.values  # Time in seconds
+
+# Compute Angular Head Velocity (AHV)
+dt = np.diff(timestamps)  # Time intervals
+ahv = np.diff(head_direction) / dt  # Angular velocity (radians per second)
+ahv = np.unwrap(ahv)  # Handle wrapping of angles to ensure continuous velocity
+
+# Create a Pynapple Tsd object for AHV
+ahv_tsd = nap.Tsd(t=timestamps[1:], d=ahv)
+
+# Compute AHV tuning curves
+tuning_curves = nap.compute_1d_tuning_curves(
+    group=spikes,         # Group of spikes
+    feature=ahv_tsd,      # AHV feature
+    ep=wake_ep,           # Epoch of interest (e.g., waking state)
+    nb_bins=30,           # Number of bins for AHV
+    minmax=(-10, 10)      # Adjust range based on your AHV distribution
+)
+
+# Plot AHV tuning curves for each neuron
+for neuron, curve in tuning_curves.items():
+    plt.plot(curve, label=neuron)
+plt.xlabel("AHV (rad/s)")
+plt.ylabel("Firing rate (Hz)")
+plt.legend()
+plt.title("AHV Tuning Curves")
+plt.show()
+
+# Inspect AHV distribution (Optional)
+plt.hist(ahv, bins=50)
+plt.xlabel("AHV (rad/s)")
+plt.ylabel("Frequency")
+plt.title("Distribution of Angular Head Velocity")
+plt.show()

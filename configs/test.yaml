@@ -7,4 +7,5 @@ steps:
   - extract_waveform_parameters   # Extract waveform parameters
 
 files:
-  - E:\B2900\B2902\B2902-230530
+- E:/B3200/B3208/B3208-240612
+ 
