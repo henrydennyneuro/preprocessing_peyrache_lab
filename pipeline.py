@@ -210,15 +210,27 @@ class PreprocessingPipeline:
         waveform_file = os.path.join(path_string, f"{recording_basename}_mean_wf.pkl")
         max_ch_file = os.path.join(path_string, f"{recording_basename}_max_ch.pkl")
 
-        if os.path.isfile(waveform_file):
-            with open(waveform_file, 'rb') as wf, open(max_ch_file, 'rb') as mc:
-                mean_wf = pickle.load(wf)
-                max_ch = pickle.load(mc)
-        else:
-            mean_wf, max_ch = data.load_mean_waveforms()
-            with open(waveform_file, 'wb') as wf, open(max_ch_file, 'wb') as mc:
-                pickle.dump(mean_wf, wf)
-                pickle.dump(max_ch, mc)
+        # Retrieving waveforms takes time. The code automatically skips waveform
+        # retrieval if the files already exist. Sometimes though, we may update
+        # our spike sorting, and need to retrieve them again. The following
+        # boolian 
+
+        # if os.path.isfile(waveform_file):
+        #     reextract_spikes = input("Reextract Spikes (expects boolian True/False): ")
+        #         if reextract_spikes == False:
+        #         with open(waveform_file, 'rb') as wf, open(max_ch_file, 'rb') as mc:
+        #             mean_wf = pickle.load(wf)
+        #             max_ch = pickle.load(mc)
+        #         elif reextract_spikes == False
+
+        print("Previously, extract_waveform_parameters() checked for the existence of waveform pkl files and loaded those.")
+        print("However, this made no sense, as if you're running this method again, you probably updated your spike sorting.")
+        print("To skip waveform extraction, simply comment out extract_waveform_parameters in config.yaml")
+
+        mean_wf, max_ch = data.load_mean_waveforms()
+        with open(waveform_file, 'wb') as wf, open(max_ch_file, 'wb') as mc:
+            pickle.dump(mean_wf, wf)
+            pickle.dump(max_ch, mc)
 
         max_wf = self.get_max_waveform(mean_wf, max_ch)
         trough_to_peaks = self.get_trough_to_peak(max_wf)

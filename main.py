@@ -1,9 +1,9 @@
-from preprocessing_pipeline import PreprocessingPipeline
+from pipeline import PreprocessingPipeline
 
 def main():
     """Main function to run the preprocessing pipeline."""
     # Initialize the pipeline
-    pipeline = PreprocessingPipeline(data_directory="data")
+    pipeline = PreprocessingPipeline()
 
     # Example: Single-file processing
     file_to_process = "data/session1.nwb"
@@ -12,7 +12,7 @@ def main():
     pipeline.process_file(file_path=file_to_process, steps=steps)
 
     # Example: Batch processing using a YAML configuration
-    config_path = "configs/B2904.yaml"
+    config_path = "configs/TRN_project.yaml"
     print(f"Processing batch files using configuration: {config_path}")
     pipeline.process_from_yaml(config_path=config_path)
 
