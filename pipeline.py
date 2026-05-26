@@ -474,6 +474,8 @@ class PreprocessingPipeline:
                     "thres_band": (7, 10),
                     "duration_band": (0.01, 0.1),
                     "min_inter_duration": 0.02,
+                    "evt_extension": ".evt.py.rip",
+                    "evt_name": "Ripple",
                 }
             elif oscillation_type == "spindle":
                 params = {
@@ -481,6 +483,8 @@ class PreprocessingPipeline:
                     "thres_band": (0.25, 20),
                     "duration_band": (0.4, 2.1),
                     "min_inter_duration": 0.02,
+                    "evt_extension": ".evt.py.spn",
+                    "evt_name": "Spindle",
                 }
             else:
                 print(f"  Unsupported oscillation type: {oscillation_type}. Skipping.")
@@ -534,7 +538,9 @@ class PreprocessingPipeline:
             osc_ep = osc_ep.drop_short_intervals(params["duration_band"][0], time_units="s").drop_long_intervals(params["duration_band"][1], time_units="s")
             osc_ep = osc_ep.merge_close_intervals(params["min_inter_duration"], time_units="s")
 
-            osc_ep.save(os.path.join(path_string, f"{recording_basename}_{oscillation_type}_ep"))
+            osc_ep.as_dataframe().to_csv(
+                os.path.join(path_string, f"{recording_basename}_{oscillation_type}_ep.csv"))
+            data.write_neuroscope_intervals(params["evt_extension"], osc_ep, params["evt_name"])
             print(f"  {oscillation_type.capitalize()} detection complete: {len(osc_ep)} events saved.")
 
     def _butter_bandpass(self, lowcut, highcut, fs, order=5):
