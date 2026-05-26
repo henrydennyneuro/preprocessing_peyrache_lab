@@ -70,18 +70,16 @@ def CrossValidateTuningCurves(wake_ep, position, spikes):
     # sub_wake_ep_2.intersect(position.time_support)
     
     # COMPUTING TUNING CURVES FOR FIRST HALF OF WAKE EPOCH
-    tuning_curves_1 = nap.compute_1d_tuning_curves(group = spikes, 
-                                                feature = position['ry'], 
-                                                ep = sub_wake_ep_1, 
-                                                nb_bins = 120,  
-                                                minmax=(0, 2*np.pi) )
-    
+    tuning_curves_1 = nap.compute_tuning_curves(
+        data=spikes, features=position['ry'], epochs=sub_wake_ep_1,
+        bins=120, range=[(0, 2*np.pi)],
+    ).to_pandas()
+
     # COMPUTING TUNING CURVES FOR SECOND HALF OF WAKE EPOCH
-    tuning_curves_2 = nap.compute_1d_tuning_curves(group = spikes, 
-                                                feature = position['ry'], 
-                                                ep = sub_wake_ep_2, 
-                                                nb_bins = 120,  
-                                                minmax=(0, 2*np.pi) )
+    tuning_curves_2 = nap.compute_tuning_curves(
+        data=spikes, features=position['ry'], epochs=sub_wake_ep_2,
+        bins=120, range=[(0, 2*np.pi)],
+    ).to_pandas()
     
     # SMOOTH TUNING CURVES TO IMPROVE LEGIBILITY
     smooth_tuning_curves_1 = smoothAngularTuningCurves(tuning_curves_1)
@@ -135,11 +133,11 @@ if __name__ == "__main__":
 			Compute tuning curves for each neuron. 
 		"""
 
-		tuning_curves = nap.compute_1d_tuning_curves(group = spikes,
-													feature = position['ry'], 
-													ep = wake_ep, 
-													nb_bins = 120,  
-													minmax=(0, 2*np.pi) )
+		tuning_curves_xr = nap.compute_tuning_curves(
+			data=spikes, features=position['ry'], epochs=wake_ep,
+			bins=120, range=[(0, 2*np.pi)],
+		)
+		tuning_curves = tuning_curves_xr.to_pandas()
 
 		smooth_tuning_curves = smoothAngularTuningCurves(tuning_curves)
 
@@ -159,12 +157,9 @@ if __name__ == "__main__":
 			Compute spatial information of each tuning curve. 
 		"""
 		
-		spatial_information = nap.compute_1d_mutual_info(smooth_tuning_curves, spikes.restrict(wake_ep).to_tsd()).to_numpy()
+		spatial_information = nap.compute_mutual_information(tuning_curves_xr)['bits/spike'].values
 
-		spatial_information_as_ndarray = []
-
-		for neuron in spikes:
-			spatial_information_as_ndarray.append(spatial_information[neuron][0])
+		spatial_information_as_ndarray = list(spatial_information)
 
 		"""
 			If necissary, you can plot all the tuning curves and display the calculated preferred orientation. 

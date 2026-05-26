@@ -91,13 +91,14 @@ class PreprocessingPipeline:
         feature = position['ry']
 
         # Compute tuning curves for the entire session
-        tuning_curves = nap.compute_1d_tuning_curves(
-            group=spikes,
-            feature=feature,
-            ep=wake_ep,
-            nb_bins=120,
-            minmax=(0, 2 * np.pi)
+        tuning_curves_xr = nap.compute_tuning_curves(
+            data=spikes,
+            features=feature,
+            epochs=wake_ep,
+            bins=120,
+            range=[(0, 2 * np.pi)],
         )
+        tuning_curves = tuning_curves_xr.to_pandas()
         smooth_tuning_curves = self.smooth_angular_tuning_curves(tuning_curves)
 
         # Cross-validate with session halves
@@ -114,7 +115,7 @@ class PreprocessingPipeline:
         mean_vector, mean_vector_length, R_value, preferred_direction = self.calculate_rayleigh_vector(smooth_tuning_curves)
 
         # Compute spatial information
-        spatial_information = nap.compute_1d_mutual_info(smooth_tuning_curves, spikes.restrict(wake_ep).to_tsd()).to_numpy()
+        spatial_information = nap.compute_mutual_information(tuning_curves_xr)['bits/spike'].values
 
         # Compute explained variance for each neuron
 
@@ -169,9 +170,9 @@ class PreprocessingPipeline:
 
         # Compute raw AHV tuning curves
         ahv_minmax = (-50 * np.pi / 180, 50 * np.pi / 180)
-        tuning_curves = nap.compute_1d_tuning_curves(
-            group=spikes, feature=feature, ep=wake_ep, nb_bins=30, minmax=ahv_minmax
-        )
+        tuning_curves = nap.compute_tuning_curves(
+            data=spikes, features=feature, epochs=wake_ep, bins=30, range=[ahv_minmax]
+        ).to_pandas()
 
         # Cross-validation
         tuning_curves_1st_half, tuning_curves_2nd_half, _, _ = self.cross_validate_tuning_curves(
@@ -376,20 +377,20 @@ class PreprocessingPipeline:
             start=wake_ep['start'] + wake_ep_center, end=wake_ep['end'], time_units="s"
         ).intersect(position.time_support)
 
-        tuning_curves_1 = nap.compute_1d_tuning_curves(
-            group=spikes,
-            feature=feature,
-            ep=sub_wake_ep_1,
-            nb_bins=120,
-            minmax=(0, 2 * np.pi),
-        )
-        tuning_curves_2 = nap.compute_1d_tuning_curves(
-            group=spikes,
-            feature=feature,
-            ep=sub_wake_ep_2,
-            nb_bins=120,
-            minmax=(0, 2 * np.pi),
-        )
+        tuning_curves_1 = nap.compute_tuning_curves(
+            data=spikes,
+            features=feature,
+            epochs=sub_wake_ep_1,
+            bins=120,
+            range=[(0, 2 * np.pi)],
+        ).to_pandas()
+        tuning_curves_2 = nap.compute_tuning_curves(
+            data=spikes,
+            features=feature,
+            epochs=sub_wake_ep_2,
+            bins=120,
+            range=[(0, 2 * np.pi)],
+        ).to_pandas()
 
         smooth_tuning_curves_1 = self.smooth_angular_tuning_curves(tuning_curves_1)
         smooth_tuning_curves_2 = self.smooth_angular_tuning_curves(tuning_curves_2)
@@ -416,22 +417,22 @@ class PreprocessingPipeline:
         even_bins = even_bins.intersect(position.time_support)
 
         # Compute tuning curves for odd bins
-        tuning_curves_odd = nap.compute_1d_tuning_curves(
-            group=spikes,
-            feature=feature,
-            ep=odd_bins,
-            nb_bins=120,
-            minmax=(0, 2 * np.pi),
-        )
+        tuning_curves_odd = nap.compute_tuning_curves(
+            data=spikes,
+            features=feature,
+            epochs=odd_bins,
+            bins=120,
+            range=[(0, 2 * np.pi)],
+        ).to_pandas()
 
         # Compute tuning curves for even bins
-        tuning_curves_even = nap.compute_1d_tuning_curves(
-            group=spikes,
-            feature=feature,
-            ep=even_bins,
-            nb_bins=120,
-            minmax=(0, 2 * np.pi),
-        )
+        tuning_curves_even = nap.compute_tuning_curves(
+            data=spikes,
+            features=feature,
+            epochs=even_bins,
+            bins=120,
+            range=[(0, 2 * np.pi)],
+        ).to_pandas()
 
         # Smooth tuning curves
         smooth_tuning_curves_odd = self.smooth_angular_tuning_curves(tuning_curves_odd)
