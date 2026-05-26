@@ -10,7 +10,10 @@
 #   - extract_waveform_parameters   # Extract waveform parameters
 #   - extract_AHV_tuning_parameters # extract information about neuron tuning to head turns
 
-# You must include the name as part of a hyphenated list under the "steps:" list. 
+# You must include the name as part of a hyphenated list under the "steps:" list.
+
+# Set to false to keep the raw .dat file after preprocessing (e.g. if waveforms still need extracting)
+delete_dat: true
 
 steps:
 #  - extract_inter_spike_intervals 

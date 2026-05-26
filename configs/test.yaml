@@ -1,5 +1,8 @@
 # YAML file for testing the PreprocessingPipeline on a single file
 
+# Set to false to keep the raw .dat file after preprocessing (e.g. if waveforms still need extracting)
+delete_dat: false
+
 steps:
   - extract_inter_spike_intervals  # Extract inter-spike intervals
   - extract_hd_tuning_parameters  # Compute head direction tuning parameters

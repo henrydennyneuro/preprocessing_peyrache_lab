@@ -20,20 +20,21 @@ class PreprocessingPipeline:
             config = yaml.safe_load(file)
         files = config.get('files', [])
         steps = config.get('steps', [])
-        return files, steps
+        delete_dat = config.get('delete_dat', True)
+        return files, steps, delete_dat
 
     def process_from_yaml(self, config_path):
         """Process files and steps specified in a YAML configuration."""
-        files, steps = self.load_yaml_config(config_path)
+        files, steps, delete_dat = self.load_yaml_config(config_path)
         for file in files:
             full_path = Path(file)
             if full_path.exists():
                 print(f"Processing file: {full_path}")
-                self.process_recording(directory=full_path, steps=steps)
+                self.process_recording(directory=full_path, steps=steps, delete_dat=delete_dat)
             else:
                 print(f"File not found: {full_path}")
-                
-    def process_recording(self, directory, steps):
+
+    def process_recording(self, directory, steps, delete_dat=True):
         """Main function to process a single recording with selected steps."""
         path_string = Path(directory)
         recording_basename = os.path.basename(directory)
@@ -50,6 +51,14 @@ class PreprocessingPipeline:
                 method(data, path_string, recording_basename)
             else:
                 raise ValueError(f"Invalid preprocessing step: {step}")
+
+        if delete_dat:
+            dat_file = path_string / f"{recording_basename}.dat"
+            if dat_file.exists():
+                dat_file.unlink()
+                print(f"Deleted {dat_file}")
+            else:
+                print(f"dat file not found, skipping deletion: {dat_file}")
 
         print(f'Finished processing: {recording_basename}')
 
