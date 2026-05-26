@@ -1,9 +1,7 @@
 import os
-import pickle
 import json
 import numpy as np
 import pandas as pd
-import pickle as pickle  
 import pynapple as nap
 import nwbmatic as ntm
 import matplotlib.pyplot as plt
@@ -102,20 +100,19 @@ if __name__ == '__main__':
 			variables.
 		"""    
 
-		waveform_filename = f'{directory}\\{recording_basename}_mean_wf.pkl'
-		max_ch_filename = f'{directory}\\{recording_basename}_max_ch.pkl'
-		
+		waveform_filename = os.path.join(path_string, f'{recording_basename}_mean_wf.csv')
+		max_ch_filename = os.path.join(path_string, f'{recording_basename}_max_ch.csv')
+
 		file_exist = os.path.isfile(waveform_filename)
 
 		if file_exist == True:
 
-			print("Waveform file found, loading pickle files.")
+			print("Waveform file found, loading CSV files.")
 
-			waveform_file = open(waveform_filename, 'rb')
-			max_ch_file = open(max_ch_filename, 'rb')
-
-			mean_wf = pickle.load(waveform_file)
-			max_ch = pickle.load(max_ch_file)
+			stacked = pd.read_csv(waveform_filename, index_col=[0, 1])
+			stacked.columns = stacked.columns.astype(int)
+			mean_wf = {neuron: group.droplevel(0) for neuron, group in stacked.groupby(level=0)}
+			max_ch = pd.read_csv(max_ch_filename, index_col=0)['max_channel'].to_dict()
 
 		elif file_exist == False:
 
@@ -125,11 +122,8 @@ if __name__ == '__main__':
 
 			mean_wf, max_ch = data.load_mean_waveforms()
 
-			with open(os.path.join(path_string, data.basename + "_mean_wf.pkl"), 'wb') as file:
-				pickle.dump(mean_wf, file)
-
-			with open(os.path.join(path_string, data.basename + "_max_ch.pkl"), 'wb') as file:
-				pickle.dump(max_ch, file)
+			pd.concat(mean_wf, names=['neuron', 'sample']).to_csv(waveform_filename)
+			pd.Series(max_ch, name='max_channel').to_csv(max_ch_filename)
 
 			# fig, axs = plt.subplots(10, 2)
 			# for i, ax in enumerate(axs.flatten()):
@@ -146,5 +140,5 @@ if __name__ == '__main__':
 
 		trough_to_peaks = GetTroughToPeak(max_wf)
 
-		with open(os.path.join(path_string, recording_basename + "_waveform_parameters.pkl"), 'wb') as file:
-			pickle.dump(trough_to_peaks, file)
+		pd.Series(trough_to_peaks, name='trough_to_peak').to_csv(
+			os.path.join(path_string, f'{recording_basename}_waveform_parameters.csv'))

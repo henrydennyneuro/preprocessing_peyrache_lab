@@ -1,6 +1,5 @@
 import os
 import yaml
-import pickle
 import json
 import numpy as np
 import pandas as pd
@@ -68,8 +67,8 @@ class PreprocessingPipeline:
             median_isis.append(self.calculate_mean_isi(spikes[neuron].times()))
             median_sleep_isis.append(self.calculate_mean_isi(sleep_spikes[neuron].times()))
 
-        with open(os.path.join(path_string, f"{recording_basename}_inter_spike_intervals.pkl"), 'wb') as file:
-            pickle.dump([median_isis, median_sleep_isis], file)
+        pd.DataFrame({'median_isi': median_isis, 'median_sleep_isi': median_sleep_isis}).to_csv(
+            os.path.join(path_string, f"{recording_basename}_inter_spike_intervals.csv"), index=False)
 
     def extract_hd_tuning_parameters(self, data, path_string, recording_basename):
         """
@@ -113,23 +112,30 @@ class PreprocessingPipeline:
         explained_variance = self.calculate_explained_variance(spikes, position, wake_ep, smooth_tuning_curves)
 
         # Save HD tuning properties
-        with open(os.path.join(path_string, f"{recording_basename}_HDtuning_properties.pkl"), 'wb') as file:
-            pickle.dump([mean_vector, mean_vector_length, R_value, preferred_direction, spatial_information, explained_variance], file)
+        pd.DataFrame({
+            'mean_vector_real': np.real(mean_vector),
+            'mean_vector_imag': np.imag(mean_vector),
+            'mean_vector_length': mean_vector_length,
+            'R_value': R_value,
+            'preferred_direction': preferred_direction,
+            'spatial_information': spatial_information.flatten(),
+            'explained_variance': explained_variance,
+        }).to_csv(os.path.join(path_string, f"{recording_basename}_HDTuning_Properties.csv"), index=False)
 
         # Save HD tuning curves
-        with open(os.path.join(path_string, f"{recording_basename}_HDtuning_curves.pkl"), 'wb') as file:
-            pickle.dump([
-                tuning_curves,
-                smooth_tuning_curves,
-                tuning_curves_1st_half,
-                tuning_curves_2nd_half,
-                smooth_tuning_curves_1st_half,
-                smooth_tuning_curves_2nd_half,
-                tuning_curves_odd_bins,
-                tuning_curves_even_bins,
-                smooth_tuning_curves_odd_bins,
-                smooth_tuning_curves_even_bins
-            ], file)
+        for name, df in {
+            'HDTuning_Curves': tuning_curves,
+            'HDTuning_Curves_smooth': smooth_tuning_curves,
+            'HDTuning_Curves_1st_half': tuning_curves_1st_half,
+            'HDTuning_Curves_2nd_half': tuning_curves_2nd_half,
+            'HDTuning_Curves_smooth_1st_half': smooth_tuning_curves_1st_half,
+            'HDTuning_Curves_smooth_2nd_half': smooth_tuning_curves_2nd_half,
+            'HDTuning_Curves_odd_bins': tuning_curves_odd_bins,
+            'HDTuning_Curves_even_bins': tuning_curves_even_bins,
+            'HDTuning_Curves_smooth_odd_bins': smooth_tuning_curves_odd_bins,
+            'HDTuning_Curves_smooth_even_bins': smooth_tuning_curves_even_bins,
+        }.items():
+            df.to_csv(os.path.join(path_string, f"{recording_basename}_{name}.csv"))
 
         print(f"HD tuning properties and curves for {recording_basename} saved.")
 
@@ -179,11 +185,16 @@ class PreprocessingPipeline:
             results.append([a, b, c, asymmetry_index])
 
         # Save data
-        with open(os.path.join(path_string, f"{recording_basename}_AHV_tuning.pkl"), 'wb') as file:
-            pickle.dump([tuning_curves, tuning_curves_1st_half, tuning_curves_2nd_half, 
-                         tuning_curves_odd_bins, tuning_curves_even_bins], file)
-        with open(os.path.join(path_string, f"{recording_basename}_AHV_fit.pkl"), 'wb') as file:
-            pickle.dump(results, file)
+        for name, df in {
+            'AHV_Tuning_Curves': tuning_curves,
+            'AHV_Tuning_Curves_1st_half': tuning_curves_1st_half,
+            'AHV_Tuning_Curves_2nd_half': tuning_curves_2nd_half,
+            'AHV_Tuning_Curves_odd_bins': tuning_curves_odd_bins,
+            'AHV_Tuning_Curves_even_bins': tuning_curves_even_bins,
+        }.items():
+            df.to_csv(os.path.join(path_string, f"{recording_basename}_{name}.csv"))
+        pd.DataFrame(results, columns=['a', 'b', 'c', 'asymmetry_index']).to_csv(
+            os.path.join(path_string, f"{recording_basename}_AHV_fit.csv"), index=False)
 
     def detect_oscillatory_events(self, lfp, epoch, freq_band, thres_band, duration_band, min_inter_duration):
         """Detect oscillatory events in the LFP."""
@@ -207,36 +218,19 @@ class PreprocessingPipeline:
 
     def extract_waveform_parameters(self, data, path_string, recording_basename):
         """Extract waveform parameters for all neurons."""
-        waveform_file = os.path.join(path_string, f"{recording_basename}_mean_wf.pkl")
-        max_ch_file = os.path.join(path_string, f"{recording_basename}_max_ch.pkl")
-
-        # Retrieving waveforms takes time. The code automatically skips waveform
-        # retrieval if the files already exist. Sometimes though, we may update
-        # our spike sorting, and need to retrieve them again. The following
-        # boolian 
-
-        # if os.path.isfile(waveform_file):
-        #     reextract_spikes = input("Reextract Spikes (expects boolian True/False): ")
-        #         if reextract_spikes == False:
-        #         with open(waveform_file, 'rb') as wf, open(max_ch_file, 'rb') as mc:
-        #             mean_wf = pickle.load(wf)
-        #             max_ch = pickle.load(mc)
-        #         elif reextract_spikes == False
-
-        print("Previously, extract_waveform_parameters() checked for the existence of waveform pkl files and loaded those.")
-        print("However, this made no sense, as if you're running this method again, you probably updated your spike sorting.")
         print("To skip waveform extraction, simply comment out extract_waveform_parameters in config.yaml")
 
         mean_wf, max_ch = data.load_mean_waveforms()
-        with open(waveform_file, 'wb') as wf, open(max_ch_file, 'wb') as mc:
-            pickle.dump(mean_wf, wf)
-            pickle.dump(max_ch, mc)
+        pd.concat(mean_wf, names=['neuron', 'sample']).to_csv(
+            os.path.join(path_string, f"{recording_basename}_mean_wf.csv"))
+        pd.Series(max_ch, name='max_channel').to_csv(
+            os.path.join(path_string, f"{recording_basename}_max_ch.csv"))
 
         max_wf = self.get_max_waveform(mean_wf, max_ch)
         trough_to_peaks = self.get_trough_to_peak(max_wf)
 
-        with open(os.path.join(path_string, f"{recording_basename}_waveform_parameters.pkl"), 'wb') as file:
-            pickle.dump(trough_to_peaks, file)
+        pd.Series(trough_to_peaks, name='trough_to_peak').to_csv(
+            os.path.join(path_string, f"{recording_basename}_waveform_parameters.csv"))
 
     # Utility Methods
     def calculate_mean_isi(self, spike_times):

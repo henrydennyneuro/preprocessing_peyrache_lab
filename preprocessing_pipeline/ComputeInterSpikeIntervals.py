@@ -1,9 +1,7 @@
 import os
-import pickle
 import json
 import numpy as np
 import pandas as pd
-import pickle as pickle  
 import pynapple as nap
 import nwbmatic as ntm
 import matplotlib.pyplot as plt
@@ -73,8 +71,8 @@ if __name__ == '__main__':
 			median_isis_list.append(CalculateMeanISI(spikes[neuron].times()))
 			median_sleep_isis_list.append(CalculateMeanISI(sleep_spikes[neuron].times()))
 
-		with open(os.path.join(path_string, recording_basename + "_inter_spike_intervals.pkl"), 'wb') as file:
-			pickle.dump([median_isis_list, median_sleep_isis_list], file)
+		pd.DataFrame({'median_isi': median_isis_list, 'median_sleep_isi': median_sleep_isis_list}).to_csv(
+			os.path.join(path_string, f'{recording_basename}_inter_spike_intervals.csv'), index=False)
 
 		print(f"ISI's for {recording_basename} extracted and saved.")
 

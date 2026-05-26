@@ -1,5 +1,4 @@
 import os
-import pickle
 import json
 import numpy as np
 import pandas as pd
@@ -185,11 +184,23 @@ if __name__ == "__main__":
 			Save HD properties as pickle. 
 		"""
 
-		with open(directory + '/' + recording_basename + '_HDTuning_Properties' + '.pkl', 'wb') as file: 
-			pickle.dump([mean_vector, mean_vector_length, R_value, preferred_direction, spatial_information_as_ndarray], file) 
+		pd.DataFrame({
+			'mean_vector_real': np.real(mean_vector),
+			'mean_vector_imag': np.imag(mean_vector),
+			'mean_vector_length': mean_vector_length,
+			'R_value': R_value,
+			'preferred_direction': preferred_direction,
+			'spatial_information': spatial_information_as_ndarray,
+		}).to_csv(os.path.join(path_string, f'{recording_basename}_HDTuning_Properties.csv'), index=False)
 
-		with open(directory + '/' + recording_basename + '_HDTuning_curves' + '.pkl', 'wb') as file: 
-			pickle.dump([tuning_curves, smooth_tuning_curves, tuning_curves_1st_half, tuning_curves_2nd_half, \
-				smooth_tuning_curves_1st_half, smooth_tuning_curves_2nd_half], file)
+		for name, df in {
+			'HDTuning_Curves': tuning_curves,
+			'HDTuning_Curves_smooth': smooth_tuning_curves,
+			'HDTuning_Curves_1st_half': tuning_curves_1st_half,
+			'HDTuning_Curves_2nd_half': tuning_curves_2nd_half,
+			'HDTuning_Curves_smooth_1st_half': smooth_tuning_curves_1st_half,
+			'HDTuning_Curves_smooth_2nd_half': smooth_tuning_curves_2nd_half,
+		}.items():
+			df.to_csv(os.path.join(path_string, f'{recording_basename}_{name}.csv'))
 
 		print(f'Computation for {recording_basename} complete')
