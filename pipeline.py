@@ -501,6 +501,27 @@ class PreprocessingPipeline:
                 print(f"Error loading LFP for channel {channel} in {metadata_file}: {e}")
                 continue
 
+            # Step 4.5: Control channel noise rejection
+            control_channel_file = os.path.join(data_path, f"{oscillation_type}_control_channel.txt")
+            if os.path.isfile(control_channel_file):
+                try:
+                    with open(control_channel_file, "r") as ctrl_f:
+                        control_channel = int(ctrl_f.read().strip())
+                    control_lfp = data.load_lfp(channel=control_channel, extension=".eeg").restrict(epoch)
+                    ctrl_signal = self.bandpass_filter(control_lfp.as_units("s").values, params["freq_band"][0], params["freq_band"][1], control_lfp.rate)
+                    ctrl_sq = np.square(ctrl_signal)
+                    ctrl_filtered = filtfilt(np.ones(51) / 51, 1, ctrl_sq)
+                    ctrl_norm = (ctrl_filtered - np.mean(ctrl_filtered)) / np.std(ctrl_filtered)
+                    ctrl_nSS = nap.Tsd(t=control_lfp.as_units("s").index.values, d=ctrl_norm, time_support=epoch)
+                    noise_ep = ctrl_nSS.threshold(1, method="above").threshold(7, method="below").time_support
+                    noise_ep = noise_ep.drop_short_intervals(params["duration_band"][0], time_units="s")
+                    noise_ep = noise_ep.drop_long_intervals(params["duration_band"][1], time_units="s")
+                    noise_ep = noise_ep.merge_close_intervals(params["min_inter_duration"], time_units="s")
+                    lfp = lfp.set_diff(noise_ep)
+                    print(f"Control channel {control_channel}: {len(noise_ep)} noise epochs removed.")
+                except Exception as e:
+                    print(f"Error applying control channel rejection: {e}. Proceeding without control.")
+
             # Step 5: Perform oscillation detection
             print(f"Performing {oscillation_type} analysis on channel {channel}...")
             signal = self.bandpass_filter(lfp.as_units("s").values, params["freq_band"][0], params["freq_band"][1], lfp.rate)

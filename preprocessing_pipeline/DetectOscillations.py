@@ -251,17 +251,19 @@ if __name__ == '__main__':
         lfp2 = data.load_lfp(channel=comparison_channel,extension='.eeg',frequency=frequency)        
         control_lfp = data.load_lfp(channel=control_channel,extension='.eeg',frequency=frequency)
 
-        # noise_thres_band = (1, 7)
+        noise_thres_band = (1, 7)
 
-        # noise_ep, noise_tsd = detect_oscillatory_events(control_lfp, sws_ep, freq_band, noise_thres_band, duration_band, min_inter_duration, wsize)
+        noise_ep, _ = detect_oscillatory_events(control_lfp, sws_ep, freq_band, noise_thres_band, duration_band, min_inter_duration, wsize)
 
-        # denoised_lfp = lfp.set_diff(noise_ep)
+        denoised_lfp = lfp.set_diff(noise_ep)
+
+        print(f"Control channel {control_channel}: {len(noise_ep)} noise epochs removed.")
 
         """
-            Detect oscillatory events with parameters set for the prespecified event types    
-        """    
+            Detect oscillatory events with parameters set for the prespecified event types
+        """
 
-        oscillation_ep, oscillation_tsd = detect_oscillatory_events(lfp, sws_ep, freq_band, thres_band, duration_band, min_inter_duration, wsize)
+        oscillation_ep, oscillation_tsd = detect_oscillatory_events(denoised_lfp, sws_ep, freq_band, thres_band, duration_band, min_inter_duration, wsize)
 
         print(f"found {len(oscillation_ep)} {oscillation_name}s")
 
