@@ -470,19 +470,21 @@ class PreprocessingPipeline:
             # Step 3: Set detection parameters
             if oscillation_type == "ripple":
                 params = {
-                    "freq_band": (100, 300),
-                    "thres_band": (7, 10),
-                    "duration_band": (0.01, 0.1),
+                    "freq_band": (120, 250),
+                    "thres_band": (3, 15),
+                    "duration_band": (0.03, 0.3),
                     "min_inter_duration": 0.02,
+                    "sliding_window_size": 10,
                     "evt_extension": ".evt.py.rip",
                     "evt_name": "Ripple",
                 }
             elif oscillation_type == "spindle":
                 params = {
                     "freq_band": (10, 16),
-                    "thres_band": (0.25, 20),
+                    "thres_band": (1, 10),
                     "duration_band": (0.4, 2.1),
                     "min_inter_duration": 0.02,
+                    "sliding_window_size": 30,
                     "evt_extension": ".evt.py.spn",
                     "evt_name": "Spindle",
                 }
@@ -507,15 +509,15 @@ class PreprocessingPipeline:
                     with open(control_channel_file, "r") as ctrl_f:
                         control_channel = int(ctrl_f.read().strip())
                     control_lfp = data.load_lfp(channel=control_channel, extension=".eeg").restrict(sws_ep)
-                    ctrl_signal = self.bandpass_filter(control_lfp.as_units("s").values, params["freq_band"][0], params["freq_band"][1], control_lfp.rate)
-                    ctrl_sq = np.square(ctrl_signal)
-                    ctrl_filtered = filtfilt(np.ones(51) / 51, 1, ctrl_sq)
-                    ctrl_norm = (ctrl_filtered - np.mean(ctrl_filtered)) / np.std(ctrl_filtered)
-                    ctrl_nSS = nap.Tsd(t=control_lfp.as_units("s").index.values, d=ctrl_norm, time_support=sws_ep)
-                    noise_ep = ctrl_nSS.threshold(1, method="above").threshold(7, method="below").time_support
-                    noise_ep = noise_ep.drop_short_intervals(params["duration_band"][0], time_units="s")
-                    noise_ep = noise_ep.drop_long_intervals(params["duration_band"][1], time_units="s")
-                    noise_ep = noise_ep.merge_close_intervals(params["min_inter_duration"], time_units="s")
+                    noise_ep = nap.detect_oscillatory_events(
+                        data=control_lfp,
+                        epochs=sws_ep,
+                        frequency_band=params["freq_band"],
+                        threshold_band=(1, 7),
+                        duration_band=params["duration_band"],
+                        min_interval=params["min_inter_duration"],
+                        sliding_window_size=params["sliding_window_size"],
+                    )
                     denoised_ep = sws_ep.set_diff(noise_ep)
                     lfp = lfp.restrict(denoised_ep)
                     print(f"  Control channel {control_channel}: {len(noise_ep)} noise epochs removed.")
@@ -523,20 +525,15 @@ class PreprocessingPipeline:
                     print(f"  Error applying control channel rejection: {e}. Proceeding without control.")
 
             # Step 5: Detect events
-            signal = self.bandpass_filter(lfp.as_units("s").values, params["freq_band"][0], params["freq_band"][1], lfp.rate)
-            squared_signal = np.square(signal)
-            window = np.ones(51) / 51
-            filtered_signal = filtfilt(window, 1, squared_signal)
-            normalized_signal = (filtered_signal - np.mean(filtered_signal)) / np.std(filtered_signal)
-
-            nSS = nap.Tsd(
-                t=lfp.as_units("s").index.values,
-                d=normalized_signal,
-                time_support=lfp.time_support,
+            osc_ep = nap.detect_oscillatory_events(
+                data=lfp,
+                epochs=lfp.time_support,
+                frequency_band=params["freq_band"],
+                threshold_band=params["thres_band"],
+                duration_band=params["duration_band"],
+                min_interval=params["min_inter_duration"],
+                sliding_window_size=params["sliding_window_size"],
             )
-            osc_ep = nSS.threshold(params["thres_band"][0], method="above").threshold(params["thres_band"][1], method="below").time_support
-            osc_ep = osc_ep.drop_short_intervals(params["duration_band"][0], time_units="s").drop_long_intervals(params["duration_band"][1], time_units="s")
-            osc_ep = osc_ep.merge_close_intervals(params["min_inter_duration"], time_units="s")
 
             osc_ep.as_dataframe().to_csv(
                 os.path.join(path_string, f"{recording_basename}_{oscillation_type}_ep.csv"))
