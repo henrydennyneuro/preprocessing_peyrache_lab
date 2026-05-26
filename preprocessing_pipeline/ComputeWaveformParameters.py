@@ -109,9 +109,9 @@ if __name__ == '__main__':
 
 			print("Waveform file found, loading CSV files.")
 
-			stacked = pd.read_csv(waveform_filename, index_col=[0, 1])
+			stacked = pd.read_csv(waveform_filename, index_col=['neuron', 'time_s'])
 			stacked.columns = stacked.columns.astype(int)
-			mean_wf = {neuron: group.droplevel(0) for neuron, group in stacked.groupby(level=0)}
+			mean_wf = {neuron: group.droplevel(0) for neuron, group in stacked.groupby(level='neuron')}
 			max_ch = pd.read_csv(max_ch_filename, index_col=0)['max_channel'].to_dict()
 
 		elif file_exist == False:
@@ -122,7 +122,7 @@ if __name__ == '__main__':
 
 			mean_wf, max_ch = data.load_mean_waveforms()
 
-			pd.concat(mean_wf, names=['neuron', 'sample']).to_csv(waveform_filename)
+			pd.concat(mean_wf, names=['neuron', 'time_s']).to_csv(waveform_filename)
 			pd.Series(max_ch, name='max_channel').to_csv(max_ch_filename)
 
 			# fig, axs = plt.subplots(10, 2)

@@ -221,7 +221,7 @@ class PreprocessingPipeline:
         print("To skip waveform extraction, simply comment out extract_waveform_parameters in config.yaml")
 
         mean_wf, max_ch = data.load_mean_waveforms()
-        pd.concat(mean_wf, names=['neuron', 'sample']).to_csv(
+        pd.concat(mean_wf, names=['neuron', 'time_s']).to_csv(
             os.path.join(path_string, f"{recording_basename}_mean_wf.csv"))
         pd.Series(max_ch, name='max_channel').to_csv(
             os.path.join(path_string, f"{recording_basename}_max_ch.csv"))
