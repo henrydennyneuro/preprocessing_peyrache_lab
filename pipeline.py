@@ -440,41 +440,34 @@ class PreprocessingPipeline:
 
         return tuning_curves_odd, tuning_curves_even, smooth_tuning_curves_odd, smooth_tuning_curves_even
 
-    def detect_oscillatory_events(self, data_path, epoch):
-        """
-        Detect oscillatory events in the LFP using metadata files for oscillation-specific analysis.
-        
-        Parameters:
-        - data_path: Path to the data folder containing metadata and LFP files.
-        - epoch: Epoch to restrict the LFP.
-        """
-        # Step 1: Check for .txt metadata files
-        metadata_files = [f for f in os.listdir(data_path) if f.endswith("_channel.txt")]
+    def detect_oscillations(self, data, path_string, recording_basename):
+        """Detect oscillatory events in the LFP for each oscillation type with a channel file present."""
+        sws_ep = data.read_neuroscope_intervals('sws')
+
+        # Step 1: Check for oscillation channel files
+        metadata_files = [f for f in os.listdir(path_string) if f.endswith("_channel.txt")]
         if not metadata_files:
-            print(f"No metadata files found in {data_path}. Skipping oscillation detection.")
+            print(f"  No oscillation channel files found for {recording_basename} — skipping.")
             return
 
-        # Step 2: Iterate through metadata files for each oscillation type
+        # Step 2: Iterate through each oscillation type found
         for metadata_file in metadata_files:
-            # Parse the oscillation type from the metadata filename
             filename_parts = metadata_file.split("_")
             if len(filename_parts) < 2 or not filename_parts[1].startswith("channel.txt"):
-                print(f"Invalid metadata file format: {metadata_file}. Skipping.")
-                continue
+                continue  # skip control_channel.txt and any malformed files
 
-            oscillation_type = filename_parts[0].lower()  # Extract oscillation type (e.g., "ripple", "spindle")
-            print(f"Processing oscillation type: {oscillation_type}")
+            oscillation_type = filename_parts[0].lower()
 
-            # Load the channel number from the metadata file
-            metadata_path = os.path.join(data_path, metadata_file)
+            # Load the channel number
+            metadata_path = os.path.join(path_string, metadata_file)
             try:
                 with open(metadata_path, "r") as file:
                     channel = int(file.read().strip())
             except ValueError:
-                print(f"Invalid channel number in {metadata_file}. Skipping this file.")
+                print(f"  Invalid channel number in {metadata_file}. Skipping.")
                 continue
 
-            # Step 3: Load analysis parameters based on oscillation type
+            # Step 3: Set detection parameters
             if oscillation_type == "ripple":
                 params = {
                     "freq_band": (100, 300),
@@ -490,40 +483,41 @@ class PreprocessingPipeline:
                     "min_inter_duration": 0.02,
                 }
             else:
-                print(f"Unsupported oscillation type: {oscillation_type}. Skipping this file.")
+                print(f"  Unsupported oscillation type: {oscillation_type}. Skipping.")
                 continue
 
-            # Step 4: Load the LFP for the specified channel
+            print(f"  {oscillation_type.capitalize()} channel file found (channel {channel}) — running detection.")
+
+            # Step 4: Load and restrict LFP
             try:
                 lfp = data.load_lfp(channel=channel, extension=".eeg")
-                lfp = lfp.restrict(epoch)
+                lfp = lfp.restrict(sws_ep)
             except Exception as e:
-                print(f"Error loading LFP for channel {channel} in {metadata_file}: {e}")
+                print(f"  Error loading LFP for channel {channel}: {e}")
                 continue
 
             # Step 4.5: Control channel noise rejection
-            control_channel_file = os.path.join(data_path, f"{oscillation_type}_control_channel.txt")
+            control_channel_file = os.path.join(path_string, f"{oscillation_type}_control_channel.txt")
             if os.path.isfile(control_channel_file):
                 try:
                     with open(control_channel_file, "r") as ctrl_f:
                         control_channel = int(ctrl_f.read().strip())
-                    control_lfp = data.load_lfp(channel=control_channel, extension=".eeg").restrict(epoch)
+                    control_lfp = data.load_lfp(channel=control_channel, extension=".eeg").restrict(sws_ep)
                     ctrl_signal = self.bandpass_filter(control_lfp.as_units("s").values, params["freq_band"][0], params["freq_band"][1], control_lfp.rate)
                     ctrl_sq = np.square(ctrl_signal)
                     ctrl_filtered = filtfilt(np.ones(51) / 51, 1, ctrl_sq)
                     ctrl_norm = (ctrl_filtered - np.mean(ctrl_filtered)) / np.std(ctrl_filtered)
-                    ctrl_nSS = nap.Tsd(t=control_lfp.as_units("s").index.values, d=ctrl_norm, time_support=epoch)
+                    ctrl_nSS = nap.Tsd(t=control_lfp.as_units("s").index.values, d=ctrl_norm, time_support=sws_ep)
                     noise_ep = ctrl_nSS.threshold(1, method="above").threshold(7, method="below").time_support
                     noise_ep = noise_ep.drop_short_intervals(params["duration_band"][0], time_units="s")
                     noise_ep = noise_ep.drop_long_intervals(params["duration_band"][1], time_units="s")
                     noise_ep = noise_ep.merge_close_intervals(params["min_inter_duration"], time_units="s")
                     lfp = lfp.set_diff(noise_ep)
-                    print(f"Control channel {control_channel}: {len(noise_ep)} noise epochs removed.")
+                    print(f"  Control channel {control_channel}: {len(noise_ep)} noise epochs removed.")
                 except Exception as e:
-                    print(f"Error applying control channel rejection: {e}. Proceeding without control.")
+                    print(f"  Error applying control channel rejection: {e}. Proceeding without control.")
 
-            # Step 5: Perform oscillation detection
-            print(f"Performing {oscillation_type} analysis on channel {channel}...")
+            # Step 5: Detect events
             signal = self.bandpass_filter(lfp.as_units("s").values, params["freq_band"][0], params["freq_band"][1], lfp.rate)
             squared_signal = np.square(signal)
             window = np.ones(51) / 51
@@ -533,16 +527,14 @@ class PreprocessingPipeline:
             nSS = nap.Tsd(
                 t=lfp.as_units("s").index.values,
                 d=normalized_signal,
-                time_support=epoch
+                time_support=sws_ep,
             )
             osc_ep = nSS.threshold(params["thres_band"][0], method="above").threshold(params["thres_band"][1], method="below").time_support
             osc_ep = osc_ep.drop_short_intervals(params["duration_band"][0], time_units="s").drop_long_intervals(params["duration_band"][1], time_units="s")
             osc_ep = osc_ep.merge_close_intervals(params["min_inter_duration"], time_units="s")
 
-            # Save results
-            basename = os.path.basename(data_path)
-            osc_ep.save(os.path.join(data_path, f"{basename}_{oscillation_type}_ep"))
-            print(f"Saved {oscillation_type} intervals for channel {channel}.")
+            osc_ep.save(os.path.join(path_string, f"{recording_basename}_{oscillation_type}_ep"))
+            print(f"  {oscillation_type.capitalize()} detection complete: {len(osc_ep)} events saved.")
 
     def _butter_bandpass(self, lowcut, highcut, fs, order=5):
         nyq = 0.5 * fs
