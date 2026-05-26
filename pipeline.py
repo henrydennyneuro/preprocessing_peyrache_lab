@@ -512,7 +512,8 @@ class PreprocessingPipeline:
                     noise_ep = noise_ep.drop_short_intervals(params["duration_band"][0], time_units="s")
                     noise_ep = noise_ep.drop_long_intervals(params["duration_band"][1], time_units="s")
                     noise_ep = noise_ep.merge_close_intervals(params["min_inter_duration"], time_units="s")
-                    lfp = lfp.set_diff(noise_ep)
+                    denoised_ep = sws_ep.set_diff(noise_ep)
+                    lfp = lfp.restrict(denoised_ep)
                     print(f"  Control channel {control_channel}: {len(noise_ep)} noise epochs removed.")
                 except Exception as e:
                     print(f"  Error applying control channel rejection: {e}. Proceeding without control.")
@@ -527,7 +528,7 @@ class PreprocessingPipeline:
             nSS = nap.Tsd(
                 t=lfp.as_units("s").index.values,
                 d=normalized_signal,
-                time_support=sws_ep,
+                time_support=lfp.time_support,
             )
             osc_ep = nSS.threshold(params["thres_band"][0], method="above").threshold(params["thres_band"][1], method="below").time_support
             osc_ep = osc_ep.drop_short_intervals(params["duration_band"][0], time_units="s").drop_long_intervals(params["duration_band"][1], time_units="s")

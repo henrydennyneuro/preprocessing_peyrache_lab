@@ -1,20 +1,13 @@
+import argparse
 from pipeline import PreprocessingPipeline
 
 def main():
-    """Main function to run the preprocessing pipeline."""
-    # Initialize the pipeline
+    parser = argparse.ArgumentParser(description="Run the preprocessing pipeline.")
+    parser.add_argument("--config", required=True, help="Path to YAML config file.")
+    args = parser.parse_args()
+
     pipeline = PreprocessingPipeline()
-
-    # Example: Single-file processing
-    file_to_process = "data/session1.nwb"
-    steps = ["calculate_hd_tuning_parameters", "compute_waveform_parameters"]
-    print(f"Processing single file: {file_to_process}")
-    pipeline.process_file(file_path=file_to_process, steps=steps)
-
-    # Example: Batch processing using a YAML configuration
-    config_path = "configs/TRN_project.yaml"
-    print(f"Processing batch files using configuration: {config_path}")
-    pipeline.process_from_yaml(config_path=config_path)
+    pipeline.process_from_yaml(args.config)
 
 if __name__ == "__main__":
     main()

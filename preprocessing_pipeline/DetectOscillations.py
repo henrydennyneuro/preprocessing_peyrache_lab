@@ -255,7 +255,8 @@ if __name__ == '__main__':
 
         noise_ep, _ = detect_oscillatory_events(control_lfp, sws_ep, freq_band, noise_thres_band, duration_band, min_inter_duration, wsize)
 
-        denoised_lfp = lfp.set_diff(noise_ep)
+        denoised_ep = sws_ep.set_diff(noise_ep)
+        denoised_lfp = lfp.restrict(denoised_ep)
 
         print(f"Control channel {control_channel}: {len(noise_ep)} noise epochs removed.")
 

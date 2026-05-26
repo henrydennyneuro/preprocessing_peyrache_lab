@@ -4,10 +4,10 @@
 delete_dat: false
 
 steps:
-  - extract_inter_spike_intervals  # Extract inter-spike intervals
-  - extract_hd_tuning_parameters  # Compute head direction tuning parameters
-#  - detect_oscillations           # Detect oscillatory events in the LFP
-  - extract_waveform_parameters   # Extract waveform parameters
+#  - extract_inter_spike_intervals  # Extract inter-spike intervals
+#  - extract_hd_tuning_parameters  # Compute head direction tuning parameters
+  - detect_oscillations            # Detect oscillatory events in the LFP
+#  - extract_waveform_parameters   # Extract waveform parameters
 
 files:
-  - D:\B5300\B5303\B5303-251008
+  - D:\B3200\B3210\B3210-240909
