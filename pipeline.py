@@ -480,7 +480,7 @@ class PreprocessingPipeline:
             oscillation_type = filename_parts[0].lower()
 
             try:
-                with open(os.path.join(path_string, metadata_file), "r") as f:
+                with open(os.path.join(path_string, metadata_file), "r", encoding='utf-8-sig') as f:
                     channel = int(f.read().strip())
             except ValueError:
                 print(f"  Invalid channel number in {metadata_file}. Skipping.")
@@ -525,7 +525,7 @@ class PreprocessingPipeline:
             control_channel_file = os.path.join(path_string, f"{oscillation_type}_control_channel.txt")
             if os.path.isfile(control_channel_file):
                 try:
-                    with open(control_channel_file, "r") as f:
+                    with open(control_channel_file, "r", encoding='utf-8-sig') as f:
                         control_channel = int(f.read().strip())
                     control_lfp = data.load_lfp(channel=control_channel, extension=".eeg")
                     noise_ep, _ = detect_oscillatory_events_hilbert(
