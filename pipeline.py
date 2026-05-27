@@ -6,8 +6,52 @@ import pandas as pd
 import pynapple as nap
 import nwbmatic as ntm
 from pathlib import Path
-from scipy.signal import butter, lfilter, filtfilt
+from scipy.signal import butter, lfilter, filtfilt, hilbert
 from scipy.optimize import curve_fit
+
+def _butter_bandpass(lowcut, highcut, fs, order=5):
+    nyq = 0.5 * fs
+    b, a = butter(order, [lowcut / nyq, highcut / nyq], btype='band')
+    return b, a
+
+def _bandpass_filter(data, lowcut, highcut, fs, order=4):
+    b, a = _butter_bandpass(lowcut, highcut, fs, order)
+    return filtfilt(b, a, data)
+
+def _bandpass_filter_tsd(tsd, lowcut, highcut, fs, order=4):
+    flfp = _bandpass_filter(tsd.values, lowcut, highcut, fs, order)
+    return nap.Tsd(t=tsd.as_units('s').index.values, d=flfp,
+                   time_support=tsd.time_support, time_units='s')
+
+def detect_oscillatory_events_hilbert(lfp, epoch, freq_band, thres_band, duration_band, min_inter_duration, smoothing_bins=40):
+    lfp = lfp.restrict(epoch)
+    signal = _bandpass_filter_tsd(lfp, freq_band[0], freq_band[1], lfp.rate)
+    envelope = np.abs(hilbert(signal.values))
+    window = np.ones(smoothing_bins) / smoothing_bins
+    nSS = np.convolve(envelope, window, mode='same')
+    nSS = (nSS - np.mean(nSS)) / np.std(nSS)
+    nSS = nap.Tsd(t=signal.index.values, d=nSS, time_support=epoch)
+
+    nSS2 = nSS.threshold(thres_band[0], method='above')
+    nSS3 = nSS2.threshold(thres_band[1], method='below')
+
+    osc_ep = nSS3.time_support
+    osc_ep = osc_ep.drop_short_intervals(duration_band[0], time_units='s')
+    osc_ep = osc_ep.drop_long_intervals(duration_band[1], time_units='s')
+    osc_ep = osc_ep.merge_close_intervals(min_inter_duration, time_units='s')
+    osc_ep = nap.IntervalSet(osc_ep.as_dataframe().reset_index(drop=True))
+
+    osc_max = []
+    osc_tsd = []
+    for count, value in enumerate(osc_ep):
+        tmp = nSS.restrict(osc_ep.loc[[count]])
+        osc_tsd.append(tmp.index[np.argmax(tmp)])
+        osc_max.append(np.max(tmp))
+
+    osc_tsd = nap.Tsd(t=np.array(osc_tsd), d=np.array(osc_max), time_support=epoch)
+
+    return osc_ep, osc_tsd
+
 
 class PreprocessingPipeline:
     def __init__(self):
@@ -205,26 +249,6 @@ class PreprocessingPipeline:
             df.to_csv(os.path.join(path_string, f"{recording_basename}_{name}.csv"))
         pd.DataFrame(results, columns=['a', 'b', 'c', 'asymmetry_index']).to_csv(
             os.path.join(path_string, f"{recording_basename}_AHV_fit.csv"), index=False)
-
-    def detect_oscillatory_events(self, lfp, epoch, freq_band, thres_band, duration_band, min_inter_duration):
-        """Detect oscillatory events in the LFP."""
-        lfp = lfp.restrict(epoch)
-        signal = self.bandpass_filter(lfp.as_units('s').values, freq_band[0], freq_band[1], lfp.rate)
-        squared_signal = np.square(signal)  # Direct access to the array
-        window = np.ones(51) / 51
-        filtered_signal = filtfilt(window, 1, squared_signal)
-        normalized_signal = (filtered_signal - np.mean(filtered_signal)) / np.std(filtered_signal)
-
-        nSS = nap.Tsd(
-            t=lfp.as_units('s').index.values, 
-            d=normalized_signal, 
-            time_support=epoch
-        )
-        osc_ep = nSS.threshold(thres_band[0], method='above').threshold(thres_band[1], method='below').time_support
-        osc_ep = osc_ep.drop_short_intervals(duration_band[0], time_units='s').drop_long_intervals(duration_band[1], time_units='s')
-        osc_ep = osc_ep.merge_close_intervals(min_inter_duration, time_units='s')
-
-        return osc_ep, nSS
 
     def extract_waveform_parameters(self, data, path_string, recording_basename):
         """Extract waveform parameters for all neurons."""
@@ -441,104 +465,113 @@ class PreprocessingPipeline:
         return tuning_curves_odd, tuning_curves_even, smooth_tuning_curves_odd, smooth_tuning_curves_even
 
     def detect_oscillations(self, data, path_string, recording_basename):
-        """Detect oscillatory events in the LFP for each oscillation type with a channel file present."""
         sws_ep = data.read_neuroscope_intervals('sws')
 
-        # Step 1: Check for oscillation channel files
         metadata_files = [f for f in os.listdir(path_string) if f.endswith("_channel.txt")]
         if not metadata_files:
             print(f"  No oscillation channel files found for {recording_basename} — skipping.")
             return
 
-        # Step 2: Iterate through each oscillation type found
         for metadata_file in metadata_files:
             filename_parts = metadata_file.split("_")
             if len(filename_parts) < 2 or not filename_parts[1].startswith("channel.txt"):
-                continue  # skip control_channel.txt and any malformed files
+                continue  # skip control_channel.txt and malformed files
 
             oscillation_type = filename_parts[0].lower()
 
-            # Load the channel number
-            metadata_path = os.path.join(path_string, metadata_file)
             try:
-                with open(metadata_path, "r") as file:
-                    channel = int(file.read().strip())
+                with open(os.path.join(path_string, metadata_file), "r") as f:
+                    channel = int(f.read().strip())
             except ValueError:
                 print(f"  Invalid channel number in {metadata_file}. Skipping.")
                 continue
 
-            # Step 3: Set detection parameters
             if oscillation_type == "ripple":
                 params = {
-                    "freq_band": (120, 250),
-                    "thres_band": (3, 15),
-                    "duration_band": (0.03, 0.3),
+                    "freq_band":          (100, 300),
+                    "thres_band":         (4, 15),
+                    "noise_thres_band":   (4, 10),
+                    "duration_band":      (0.01, 0.1),
                     "min_inter_duration": 0.02,
-                    "sliding_window_size": 10,
-                    "evt_extension": ".evt.py.rip",
-                    "evt_name": "Ripple",
+                    "smoothing_bins":     40,
+                    "evt_extension":      ".evt.py.rip",
+                    "evt_abbreviation":   "rip",
                 }
-            elif oscillation_type == "spindle":
-                params = {
-                    "freq_band": (10, 16),
-                    "thres_band": (1, 10),
-                    "duration_band": (0.4, 2.1),
-                    "min_inter_duration": 0.02,
-                    "sliding_window_size": 30,
-                    "evt_extension": ".evt.py.spn",
-                    "evt_name": "Spindle",
-                }
+            # elif oscillation_type == "spindle":
+            #     params = {
+            #         "freq_band":          (10, 16),
+            #         "thres_band":         (1, 10),
+            #         "noise_thres_band":   (1, 7),
+            #         "duration_band":      (0.4, 2.1),
+            #         "min_inter_duration": 0.02,
+            #         "smoothing_bins":     51,
+            #         "evt_extension":      ".evt.py.spn",
+            #         "evt_abbreviation":   "spn",
+            #     }
             else:
                 print(f"  Unsupported oscillation type: {oscillation_type}. Skipping.")
                 continue
 
-            print(f"  {oscillation_type.capitalize()} channel file found (channel {channel}) — running detection.")
+            print(f"  {oscillation_type.capitalize()} channel {channel} — running detection.")
 
-            # Step 4: Load and restrict LFP
             try:
                 lfp = data.load_lfp(channel=channel, extension=".eeg")
-                lfp = lfp.restrict(sws_ep)
             except Exception as e:
                 print(f"  Error loading LFP for channel {channel}: {e}")
                 continue
 
-            # Step 4.5: Control channel noise rejection
+            # Control channel noise rejection
+            denoised_ep = sws_ep
             control_channel_file = os.path.join(path_string, f"{oscillation_type}_control_channel.txt")
             if os.path.isfile(control_channel_file):
                 try:
-                    with open(control_channel_file, "r") as ctrl_f:
-                        control_channel = int(ctrl_f.read().strip())
-                    control_lfp = data.load_lfp(channel=control_channel, extension=".eeg").restrict(sws_ep)
-                    noise_ep = nap.detect_oscillatory_events(
-                        data=control_lfp,
-                        epochs=sws_ep,
-                        frequency_band=params["freq_band"],
-                        threshold_band=(1, 7),
-                        duration_band=params["duration_band"],
-                        min_interval=params["min_inter_duration"],
-                        sliding_window_size=params["sliding_window_size"],
-                    )
+                    with open(control_channel_file, "r") as f:
+                        control_channel = int(f.read().strip())
+                    control_lfp = data.load_lfp(channel=control_channel, extension=".eeg")
+                    noise_ep, _ = detect_oscillatory_events_hilbert(
+                        control_lfp, sws_ep,
+                        params["freq_band"], params["noise_thres_band"],
+                        params["duration_band"], params["min_inter_duration"],
+                        params["smoothing_bins"])
                     denoised_ep = sws_ep.set_diff(noise_ep)
-                    lfp = lfp.restrict(denoised_ep)
-                    print(f"  Control channel {control_channel}: {len(noise_ep)} noise epochs removed.")
+                    print(f"  Control channel {control_channel}: {len(noise_ep)} noise epochs removed "
+                          f"({(noise_ep['end'] - noise_ep['start']).sum():.1f} s).")
                 except Exception as e:
-                    print(f"  Error applying control channel rejection: {e}. Proceeding without control.")
+                    print(f"  Control channel rejection failed: {e}. Proceeding without control.")
 
-            # Step 5: Detect events
-            osc_ep = nap.detect_oscillatory_events(
-                data=lfp,
-                epochs=lfp.time_support,
-                frequency_band=params["freq_band"],
-                threshold_band=params["thres_band"],
-                duration_band=params["duration_band"],
-                min_interval=params["min_inter_duration"],
-                sliding_window_size=params["sliding_window_size"],
-            )
+            # Detect events
+            osc_ep, osc_tsd = detect_oscillatory_events_hilbert(
+                lfp, denoised_ep,
+                params["freq_band"], params["thres_band"],
+                params["duration_band"], params["min_inter_duration"],
+                params["smoothing_bins"])
 
+            print(f"  Found {len(osc_ep)} {oscillation_type}s.")
+
+            # Save CSV
             osc_ep.as_dataframe().to_csv(
                 os.path.join(path_string, f"{recording_basename}_{oscillation_type}_ep.csv"))
-            data.write_neuroscope_intervals(params["evt_extension"], osc_ep, params["evt_name"])
-            print(f"  {oscillation_type.capitalize()} detection complete: {len(osc_ep)} events saved.")
+
+            # Save .evt file for Neuroscope (start / peak / stop)
+            starts = osc_ep.as_units('ms')['start'].values
+            peaks  = osc_tsd.as_units('ms').index.values
+            ends   = osc_ep.as_units('ms')['end'].values
+            abbrev = params["evt_abbreviation"]
+
+            datatowrite = np.vstack((starts, peaks, ends)).T.flatten()
+            n = len(osc_ep)
+            texttowrite = np.vstack((
+                np.repeat(np.array([f'{abbrev} start 1']), n),
+                np.repeat(np.array([f'{abbrev} peak 1']),  n),
+                np.repeat(np.array([f'{abbrev} stop 1']),  n),
+            )).T.flatten()
+
+            evt_file = os.path.join(path_string, data.basename + params["evt_extension"])
+            with open(evt_file, 'w') as f:
+                for t, label in zip(datatowrite, texttowrite):
+                    f.write(f"{t:1.6f}\t{label}\n")
+
+            print(f"  Saved {evt_file}")
 
     def _butter_bandpass(self, lowcut, highcut, fs, order=5):
         nyq = 0.5 * fs
