@@ -1,4 +1,5 @@
 import os
+import warnings
 import yaml
 import json
 import numpy as np
@@ -8,6 +9,9 @@ import nwbmatic as ntm
 from pathlib import Path
 from scipy.signal import butter, lfilter, filtfilt, hilbert
 from scipy.optimize import curve_fit
+
+warnings.filterwarnings('ignore', category=FutureWarning, module='pynapple')
+warnings.filterwarnings('ignore', message='Some starts and ends are equal', category=UserWarning)
 
 def _butter_bandpass(lowcut, highcut, fs, order=5):
     nyq = 0.5 * fs
@@ -53,6 +57,15 @@ def detect_oscillatory_events_hilbert(lfp, epoch, freq_band, thres_band, duratio
     return osc_ep, osc_tsd
 
 
+_STEP_LABELS = {
+    'extract_inter_spike_intervals': 'Inter-spike intervals',
+    'extract_hd_tuning_parameters':  'HD tuning parameters',
+    'extract_AHV_tuning_parameters': 'AHV tuning parameters',
+    'detect_oscillations':           'Oscillation detection',
+    'extract_waveform_parameters':   'Waveform parameters',
+}
+
+
 class PreprocessingPipeline:
     def __init__(self):
         """Initialize the preprocessing pipeline without assuming a fixed data directory."""
@@ -73,7 +86,6 @@ class PreprocessingPipeline:
         for file in files:
             full_path = Path(file)
             if full_path.exists():
-                print(f"Processing file: {full_path}")
                 self.process_recording(directory=full_path, steps=steps, delete_dat=delete_dat)
             else:
                 print(f"File not found: {full_path}")
@@ -82,16 +94,22 @@ class PreprocessingPipeline:
         """Main function to process a single recording with selected steps."""
         path_string = Path(directory)
         recording_basename = os.path.basename(directory)
-        print(f'Processing recording: {recording_basename}')
+
+        print(f"\n{'='*60}")
+        print(f"  Recording : {recording_basename}")
+        print(f"  Path      : {path_string}")
+        print(f"{'='*60}")
 
         # Load session data
         data = ntm.load_session(directory, "neurosuite")
 
         # Dynamically call specified steps
-        for step in steps:
+        n_steps = len(steps)
+        for i, step in enumerate(steps, 1):
             if hasattr(self, step):
                 method = getattr(self, step)
-                print(f"Executing step: {step}")
+                label = _STEP_LABELS.get(step, step)
+                print(f"\n  [{i}/{n_steps}] {label}")
                 method(data, path_string, recording_basename)
             else:
                 raise ValueError(f"Invalid preprocessing step: {step}")
@@ -100,11 +118,11 @@ class PreprocessingPipeline:
             dat_file = path_string / f"{recording_basename}.dat"
             if dat_file.exists():
                 dat_file.unlink()
-                print(f"Deleted {dat_file}")
+                print(f"\n  .dat file deleted.")
             else:
-                print(f"dat file not found, skipping deletion: {dat_file}")
+                print(f"\n  .dat file not found — skipping deletion.")
 
-        print(f'Finished processing: {recording_basename}')
+        print(f"\n✓ Finished: {recording_basename}\n")
 
     # Preprocessing Methods
     def extract_inter_spike_intervals(self, data, path_string, recording_basename):
@@ -191,7 +209,6 @@ class PreprocessingPipeline:
         }.items():
             df.to_csv(os.path.join(path_string, f"{recording_basename}_{name}.csv"))
 
-        print(f"HD tuning properties and curves for {recording_basename} saved.")
 
     def extract_AHV_tuning_parameters(self, data, path_string, recording_basename):
         """Extracts and saves AHV tuning parameters, cross-validation results, and quadratic fit properties."""
@@ -253,7 +270,6 @@ class PreprocessingPipeline:
 
     def extract_waveform_parameters(self, data, path_string, recording_basename):
         """Extract waveform parameters for all neurons."""
-        print("To skip waveform extraction, simply comment out extract_waveform_parameters in config.yaml")
 
         mean_wf, max_ch = data.load_mean_waveforms()
         pd.concat(mean_wf, names=['neuron', 'time_s']).to_csv(
@@ -304,7 +320,6 @@ class PreprocessingPipeline:
 
                 # If spike rates are empty, append NaN and continue
                 if spike_rates.values.size == 0:
-                    print(f"No spikes detected for neuron {neuron_id}. Assigning NaN...")
                     explained_variances.append(np.nan)
                     continue
 
@@ -329,7 +344,6 @@ class PreprocessingPipeline:
 
                 # If shapes of spike_rates and predicted_spike_rate don't match, append NaN
                 if spike_rates.shape[0] != predicted_rates.shape[0]:
-                    print(f"Mismatch in spike rates and predicted rates for neuron {neuron_id}. Assigning NaN...")
                     explained_variances.append(np.nan)
                     continue
 
@@ -342,7 +356,6 @@ class PreprocessingPipeline:
 
                 # If variance of true spike rates is zero, append NaN
                 if var_true == 0:
-                    print(f"Zero variance in true spike rates for neuron {neuron_id}. Assigning NaN...")
                     explained_variances.append(np.nan)
                     continue
 
@@ -350,9 +363,7 @@ class PreprocessingPipeline:
                 explained_variance = 1 - (var_residuals / var_true)
                 explained_variances.append(explained_variance)
 
-            except Exception as e:
-                # Handle any unexpected errors
-                print(f"Error processing neuron {neuron_id}: {e}. Assigning NaN...")
+            except Exception:
                 explained_variances.append(np.nan)
 
         # Count neurons with NaN explained variance
@@ -360,7 +371,7 @@ class PreprocessingPipeline:
 
         # Print the count if greater than 0
         if num_nan > 0:
-            print(f"\nWarning: {num_nan} neurons have NaN explained variance.\n")
+            print(f"    Warning: {num_nan}/{len(explained_variances)} neurons have NaN explained variance.")
 
         return explained_variances
 
@@ -474,7 +485,7 @@ class PreprocessingPipeline:
 
         metadata_files = [f for f in os.listdir(path_string) if f.endswith("_channel.txt")]
         if not metadata_files:
-            print(f"  No oscillation channel files found for {recording_basename} — skipping.")
+            print(f"    No oscillation channel files found — skipping.")
             return
 
         for metadata_file in metadata_files:
@@ -488,7 +499,7 @@ class PreprocessingPipeline:
                 with open(os.path.join(path_string, metadata_file), "r", encoding='utf-8-sig') as f:
                     channel = int(f.read().strip())
             except ValueError:
-                print(f"  Invalid channel number in {metadata_file}. Skipping.")
+                print(f"    Invalid channel number in {metadata_file}. Skipping.")
                 continue
 
             if oscillation_type == "ripple":
@@ -514,15 +525,15 @@ class PreprocessingPipeline:
             #         "evt_abbreviation":   "spn",
             #     }
             else:
-                print(f"  Unsupported oscillation type: {oscillation_type}. Skipping.")
+                print(f"    Unsupported oscillation type: {oscillation_type}. Skipping.")
                 continue
 
-            print(f"  {oscillation_type.capitalize()} channel {channel} — running detection.")
+            print(f"    {oscillation_type.capitalize()} channel {channel} — running detection.")
 
             try:
                 lfp = data.load_lfp(channel=channel, extension=".eeg")
             except Exception as e:
-                print(f"  Error loading LFP for channel {channel}: {e}")
+                print(f"    Error loading LFP for channel {channel}: {e}")
                 continue
 
             # Control channel noise rejection
@@ -539,10 +550,10 @@ class PreprocessingPipeline:
                         params["duration_band"], params["min_inter_duration"],
                         params["smoothing_bins"])
                     denoised_ep = sws_ep.set_diff(noise_ep)
-                    print(f"  Control channel {control_channel}: {len(noise_ep)} noise epochs removed "
+                    print(f"    Control channel {control_channel}: {len(noise_ep)} noise epochs removed "
                           f"({(noise_ep['end'] - noise_ep['start']).sum():.1f} s).")
                 except Exception as e:
-                    print(f"  Control channel rejection failed: {e}. Proceeding without control.")
+                    print(f"    Control channel rejection failed: {e}. Proceeding without control.")
 
             # Detect events
             osc_ep, osc_tsd = detect_oscillatory_events_hilbert(
@@ -551,7 +562,7 @@ class PreprocessingPipeline:
                 params["duration_band"], params["min_inter_duration"],
                 params["smoothing_bins"])
 
-            print(f"  Found {len(osc_ep)} {oscillation_type}s.")
+            print(f"    Found {len(osc_ep)} {oscillation_type}s.")
 
             # Save CSV
             osc_ep.as_dataframe().to_csv(
@@ -576,7 +587,7 @@ class PreprocessingPipeline:
                 for t, label in zip(datatowrite, texttowrite):
                     f.write(f"{t:1.6f}\t{label}\n")
 
-            print(f"  Saved {evt_file}")
+            print(f"    Saved {evt_file}")
 
     def _butter_bandpass(self, lowcut, highcut, fs, order=5):
         nyq = 0.5 * fs
