@@ -253,8 +253,13 @@ class PreprocessingPipeline:
 
             pos_firing = sum(firing_rates[ahv_bins > 0])
             neg_firing = sum(firing_rates[ahv_bins < 0])
-            asymmetry_index = (pos_firing - neg_firing) / (pos_firing + neg_firing)
+            with np.errstate(invalid='ignore', divide='ignore'):
+                asymmetry_index = (pos_firing - neg_firing) / (pos_firing + neg_firing)
             results.append([a, b, c, asymmetry_index])
+
+        n_nan = sum(np.isnan(r[3]) for r in results)
+        if n_nan > 0:
+            print(f"Warning: {n_nan}/{len(results)} neurons have NaN asymmetry index.")
 
         # Save data
         for name, df in {
@@ -282,6 +287,7 @@ class PreprocessingPipeline:
 
         pd.Series(trough_to_peaks, name='trough_to_peak').to_csv(
             os.path.join(path_string, f"{recording_basename}_waveform_parameters.csv"))
+        print()
 
     # Utility Methods
     def calculate_mean_isi(self, spike_times):
@@ -371,7 +377,7 @@ class PreprocessingPipeline:
 
         # Print the count if greater than 0
         if num_nan > 0:
-            print(f"    Warning: {num_nan}/{len(explained_variances)} neurons have NaN explained variance.")
+            print(f"Warning: {num_nan}/{len(explained_variances)} neurons have NaN explained variance.")
 
         return explained_variances
 
@@ -485,7 +491,7 @@ class PreprocessingPipeline:
 
         metadata_files = [f for f in os.listdir(path_string) if f.endswith("_channel.txt")]
         if not metadata_files:
-            print(f"    No oscillation channel files found — skipping.")
+            print(f"No oscillation channel files found — skipping.")
             return
 
         for metadata_file in metadata_files:
@@ -499,7 +505,7 @@ class PreprocessingPipeline:
                 with open(os.path.join(path_string, metadata_file), "r", encoding='utf-8-sig') as f:
                     channel = int(f.read().strip())
             except ValueError:
-                print(f"    Invalid channel number in {metadata_file}. Skipping.")
+                print(f"Invalid channel number in {metadata_file}. Skipping.")
                 continue
 
             if oscillation_type == "ripple":
@@ -525,15 +531,15 @@ class PreprocessingPipeline:
             #         "evt_abbreviation":   "spn",
             #     }
             else:
-                print(f"    Unsupported oscillation type: {oscillation_type}. Skipping.")
+                print(f"Unsupported oscillation type: {oscillation_type}. Skipping.")
                 continue
 
-            print(f"    {oscillation_type.capitalize()} channel {channel} — running detection.")
+            print(f"{oscillation_type.capitalize()} channel {channel} — running detection.")
 
             try:
                 lfp = data.load_lfp(channel=channel, extension=".eeg")
             except Exception as e:
-                print(f"    Error loading LFP for channel {channel}: {e}")
+                print(f"Error loading LFP for channel {channel}: {e}")
                 continue
 
             # Control channel noise rejection
@@ -550,10 +556,10 @@ class PreprocessingPipeline:
                         params["duration_band"], params["min_inter_duration"],
                         params["smoothing_bins"])
                     denoised_ep = sws_ep.set_diff(noise_ep)
-                    print(f"    Control channel {control_channel}: {len(noise_ep)} noise epochs removed "
+                    print(f"Control channel {control_channel}: {len(noise_ep)} noise epochs removed "
                           f"({(noise_ep['end'] - noise_ep['start']).sum():.1f} s).")
                 except Exception as e:
-                    print(f"    Control channel rejection failed: {e}. Proceeding without control.")
+                    print(f"Control channel rejection failed: {e}. Proceeding without control.")
 
             # Detect events
             osc_ep, osc_tsd = detect_oscillatory_events_hilbert(
@@ -562,7 +568,7 @@ class PreprocessingPipeline:
                 params["duration_band"], params["min_inter_duration"],
                 params["smoothing_bins"])
 
-            print(f"    Found {len(osc_ep)} {oscillation_type}s.")
+            print(f"Found {len(osc_ep)} {oscillation_type}s.")
 
             # Save CSV
             osc_ep.as_dataframe().to_csv(
@@ -587,7 +593,7 @@ class PreprocessingPipeline:
                 for t, label in zip(datatowrite, texttowrite):
                     f.write(f"{t:1.6f}\t{label}\n")
 
-            print(f"    Saved {evt_file}")
+            print(f"Saved {evt_file}")
 
     def _butter_bandpass(self, lowcut, highcut, fs, order=5):
         nyq = 0.5 * fs
