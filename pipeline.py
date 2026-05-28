@@ -142,7 +142,7 @@ class PreprocessingPipeline:
             bins=120,
             range=[(0, 2 * np.pi)],
         )
-        tuning_curves = tuning_curves_xr.to_pandas()
+        tuning_curves = tuning_curves_xr.to_pandas().T
         smooth_tuning_curves = self.smooth_angular_tuning_curves(tuning_curves)
 
         # Cross-validate with session halves
@@ -215,8 +215,9 @@ class PreprocessingPipeline:
         # Compute raw AHV tuning curves
         ahv_minmax = (-50 * np.pi / 180, 50 * np.pi / 180)
         tuning_curves = nap.compute_tuning_curves(
-            data=spikes, features=feature, epochs=wake_ep, bins=30, range=[ahv_minmax]
-        ).to_pandas()
+            data=spikes, features=feature, epochs=wake_ep, bins=30, range=[ahv_minmax],
+            return_pandas=True,
+        )
 
         # Cross-validation
         tuning_curves_1st_half, tuning_curves_2nd_half, _, _ = self.cross_validate_tuning_curves(
@@ -407,14 +408,16 @@ class PreprocessingPipeline:
             epochs=sub_wake_ep_1,
             bins=120,
             range=[(0, 2 * np.pi)],
-        ).to_pandas()
+            return_pandas=True,
+        )
         tuning_curves_2 = nap.compute_tuning_curves(
             data=spikes,
             features=feature,
             epochs=sub_wake_ep_2,
             bins=120,
             range=[(0, 2 * np.pi)],
-        ).to_pandas()
+            return_pandas=True,
+        )
 
         smooth_tuning_curves_1 = self.smooth_angular_tuning_curves(tuning_curves_1)
         smooth_tuning_curves_2 = self.smooth_angular_tuning_curves(tuning_curves_2)
@@ -447,7 +450,8 @@ class PreprocessingPipeline:
             epochs=odd_bins,
             bins=120,
             range=[(0, 2 * np.pi)],
-        ).to_pandas()
+            return_pandas=True,
+        )
 
         # Compute tuning curves for even bins
         tuning_curves_even = nap.compute_tuning_curves(
@@ -456,7 +460,8 @@ class PreprocessingPipeline:
             epochs=even_bins,
             bins=120,
             range=[(0, 2 * np.pi)],
-        ).to_pandas()
+            return_pandas=True,
+        )
 
         # Smooth tuning curves
         smooth_tuning_curves_odd = self.smooth_angular_tuning_curves(tuning_curves_odd)
