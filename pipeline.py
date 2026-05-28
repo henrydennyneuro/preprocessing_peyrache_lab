@@ -659,6 +659,14 @@ class PreprocessingPipeline:
 
         max_ch = pd.read_csv(max_ch_path, index_col=0)['max_channel'].astype(int).to_dict()
 
+        ahv_tc_path = path_string / f"{recording_basename}_AHV_Tuning_Curves.csv"
+        if ahv_tc_path.exists():
+            ahv_tc = pd.read_csv(ahv_tc_path, index_col=0)
+            ahv_tc.columns = pd.to_numeric(ahv_tc.columns, errors='coerce').round().astype(int)
+        else:
+            print("AHV tuning curves not found — AHV panel will be omitted.")
+            ahv_tc = None
+
         locations = data.spikes.get_info('location').to_dict()
         groups    = data.spikes.get_info('group').to_dict()
 
@@ -669,29 +677,31 @@ class PreprocessingPipeline:
             for shank in sorted({groups[n] for n in region_neurons}):
                 shank_neurons = sorted([n for n in region_neurons if groups[n] == shank])
                 self._plot_shank_figure(
-                    shank_neurons, smooth_tc, mean_wf, max_ch,
+                    shank_neurons, smooth_tc, mean_wf, max_ch, ahv_tc,
                     region, shank, cmap_name, recording_basename, plots_dir,
                 )
 
-    def _plot_shank_figure(self, neurons, smooth_tc, mean_wf, max_ch,
+    def _plot_shank_figure(self, neurons, smooth_tc, mean_wf, max_ch, ahv_tc,
                            region, shank, cmap_name, basename, plots_dir):
         n_neurons = len(neurons)
         n_rows = min(n_neurons, 5)
         n_cols = math.ceil(n_neurons / 5)
         cmap = plt.cm.get_cmap(cmap_name)
+        panels = 3 if ahv_tc is not None else 2
 
-        fig_w = n_cols * 3.5
+        fig_w = n_cols * (5.0 if panels == 3 else 3.5)
         fig_h = n_rows * 2.2
         fig = plt.figure(figsize=(fig_w, fig_h))
-        gs = gridspec.GridSpec(n_rows, n_cols * 2, hspace=0.55, wspace=0.35,
+        gs = gridspec.GridSpec(n_rows, n_cols * panels, hspace=0.55, wspace=0.35,
                                figure=fig)
 
         for idx, neuron in enumerate(neurons):
             row = idx % n_rows
             col = idx // n_rows
+            is_bottom = (row == n_rows - 1 or idx == n_neurons - 1)
 
-            # --- polar tuning curve ---
-            ax_tc = fig.add_subplot(gs[row, col * 2], projection='polar')
+            # --- HD polar tuning curve ---
+            ax_tc = fig.add_subplot(gs[row, col * panels], projection='polar')
             if neuron in smooth_tc.columns:
                 ax_tc.plot(smooth_tc.index.values, smooth_tc[neuron].values,
                            linewidth=1.0, color=cmap(0.7))
@@ -700,8 +710,21 @@ class PreprocessingPipeline:
             ax_tc.set_yticklabels([])
             ax_tc.tick_params(pad=0)
 
+            # --- AHV tuning curve ---
+            if ahv_tc is not None:
+                ax_ahv = fig.add_subplot(gs[row, col * panels + 1])
+                if neuron in ahv_tc.columns:
+                    x_degs = ahv_tc.index.values * (180.0 / np.pi)
+                    ax_ahv.plot(x_degs, ahv_tc[neuron].values,
+                                linewidth=1.0, color=cmap(0.7))
+                    ax_ahv.axvline(0, color='gray', linewidth=0.5, linestyle='--')
+                ax_ahv.set_yticklabels([])
+                ax_ahv.tick_params(labelsize=6)
+                if is_bottom:
+                    ax_ahv.set_xlabel('AHV (°/s)', fontsize=6)
+
             # --- waveform ---
-            ax_wf = fig.add_subplot(gs[row, col * 2 + 1])
+            ax_wf = fig.add_subplot(gs[row, col * panels + panels - 1])
             if neuron in mean_wf:
                 wf = mean_wf[neuron]
                 trough_per_ch = wf.min()
@@ -714,7 +737,7 @@ class PreprocessingPipeline:
                                color=cmap(shade), linewidth=lw)
             ax_wf.set_yticklabels([])
             ax_wf.tick_params(labelsize=6)
-            if row == n_rows - 1 or idx == n_neurons - 1:
+            if is_bottom:
                 ax_wf.set_xlabel('Time (s)', fontsize=6)
 
         fig.suptitle(f"{basename}  —  {region}  shank {shank}", fontsize=9, y=1.01)
