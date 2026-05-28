@@ -1,9 +1,14 @@
 import os
+import math
 import warnings
 import yaml
 import json
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import pynapple as nap
 import nwbmatic as ntm
 from pathlib import Path
@@ -63,6 +68,7 @@ _STEP_LABELS = {
     'extract_AHV_tuning_parameters': 'AHV tuning parameters',
     'detect_oscillations':           'Oscillation detection',
     'extract_waveform_parameters':   'Waveform parameters',
+    'generate_plots':                'Generate plots',
 }
 
 
@@ -619,3 +625,127 @@ class PreprocessingPipeline:
             peak = waveform.loc[trough:].idxmax()
             trough_to_peaks[neuron] = peak - trough
         return trough_to_peaks
+
+    # ------------------------------------------------------------------ #
+    # Plotting                                                             #
+    # ------------------------------------------------------------------ #
+
+    def generate_plots(self, data, path_string, recording_basename):
+        """Create and save all verification plots for a recording."""
+        plots_dir = path_string / "plots"
+        plots_dir.mkdir(exist_ok=True)
+        self._plot_hd_tuning_waveforms(data, path_string, recording_basename, plots_dir)
+        self._plot_oscillation_durations(path_string, recording_basename, plots_dir)
+
+    def _plot_hd_tuning_waveforms(self, data, path_string, recording_basename, plots_dir):
+        smooth_tc_path = path_string / f"{recording_basename}_HDTuning_Curves_smooth.csv"
+        mean_wf_path   = path_string / f"{recording_basename}_mean_wf.csv"
+        max_ch_path    = path_string / f"{recording_basename}_max_ch.csv"
+
+        for p in [smooth_tc_path, mean_wf_path, max_ch_path]:
+            if not p.exists():
+                print(f"Tuning/waveform plot skipped — {p.name} not found.")
+                return
+
+        smooth_tc = pd.read_csv(smooth_tc_path, index_col=0)
+        smooth_tc.columns = pd.to_numeric(smooth_tc.columns, errors='coerce').round().astype(int)
+
+        mean_wf_df = pd.read_csv(mean_wf_path, index_col=[0, 1])
+        mean_wf_df.columns = mean_wf_df.columns.astype(int)
+        mean_wf = {
+            nid: mean_wf_df.loc[nid]
+            for nid in mean_wf_df.index.get_level_values(0).unique()
+        }
+
+        max_ch = pd.read_csv(max_ch_path, index_col=0)['max_channel'].astype(int).to_dict()
+
+        locations = data.spikes.get_info('location').to_dict()
+        groups    = data.spikes.get_info('group').to_dict()
+
+        for region, cmap_name in [('ADn', 'Reds'), ('TRn', 'Purples')]:
+            region_neurons = [n for n in data.spikes.keys() if locations.get(n) == region]
+            if not region_neurons:
+                continue
+            for shank in sorted({groups[n] for n in region_neurons}):
+                shank_neurons = sorted([n for n in region_neurons if groups[n] == shank])
+                self._plot_shank_figure(
+                    shank_neurons, smooth_tc, mean_wf, max_ch,
+                    region, shank, cmap_name, recording_basename, plots_dir,
+                )
+
+    def _plot_shank_figure(self, neurons, smooth_tc, mean_wf, max_ch,
+                           region, shank, cmap_name, basename, plots_dir):
+        n_neurons = len(neurons)
+        n_rows = min(n_neurons, 5)
+        n_cols = math.ceil(n_neurons / 5)
+        cmap = plt.cm.get_cmap(cmap_name)
+
+        fig_w = n_cols * 3.5
+        fig_h = n_rows * 2.2
+        fig = plt.figure(figsize=(fig_w, fig_h))
+        gs = gridspec.GridSpec(n_rows, n_cols * 2, hspace=0.55, wspace=0.35,
+                               figure=fig)
+
+        for idx, neuron in enumerate(neurons):
+            row = idx % n_rows
+            col = idx // n_rows
+
+            # --- polar tuning curve ---
+            ax_tc = fig.add_subplot(gs[row, col * 2], projection='polar')
+            if neuron in smooth_tc.columns:
+                ax_tc.plot(smooth_tc.index.values, smooth_tc[neuron].values,
+                           linewidth=1.0, color=cmap(0.7))
+            ax_tc.set_title(str(neuron), fontsize=7, pad=3)
+            ax_tc.set_xticklabels([])
+            ax_tc.set_yticklabels([])
+            ax_tc.tick_params(pad=0)
+
+            # --- waveform ---
+            ax_wf = fig.add_subplot(gs[row, col * 2 + 1])
+            if neuron in mean_wf:
+                wf = mean_wf[neuron]
+                trough_per_ch = wf.min()
+                sorted_channels = trough_per_ch.sort_values().index
+                n_ch = len(sorted_channels)
+                for rank, ch in enumerate(sorted_channels):
+                    shade = 0.85 - 0.65 * (rank / max(n_ch - 1, 1))
+                    lw = 1.4 if ch == max_ch.get(neuron) else 0.6
+                    ax_wf.plot(wf.index.values, wf[ch].values,
+                               color=cmap(shade), linewidth=lw)
+            ax_wf.set_yticklabels([])
+            ax_wf.tick_params(labelsize=6)
+            if row == n_rows - 1 or idx == n_neurons - 1:
+                ax_wf.set_xlabel('Time (s)', fontsize=6)
+
+        fig.suptitle(f"{basename}  —  {region}  shank {shank}", fontsize=9, y=1.01)
+        fig.savefig(plots_dir / f"{basename}_{region}_shank{shank}.png",
+                    dpi=150, bbox_inches='tight')
+        plt.close(fig)
+
+    def _plot_oscillation_durations(self, path_string, recording_basename, plots_dir):
+        ep_files = sorted(path_string.glob(f"{recording_basename}_*_ep.csv"))
+        if not ep_files:
+            print("No oscillation epoch files found — skipping duration plots.")
+            return
+
+        for ep_file in ep_files:
+            stem = ep_file.stem
+            osc_type = stem[len(recording_basename) + 1 : -3]
+
+            ep_df = pd.read_csv(ep_file)
+            if 'start' not in ep_df.columns or 'end' not in ep_df.columns:
+                print(f"Skipping {ep_file.name} — unexpected format.")
+                continue
+
+            durations_ms = (ep_df['end'] - ep_df['start']) * 1000
+
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.hist(durations_ms, bins=30, color='steelblue',
+                    edgecolor='white', linewidth=0.5)
+            ax.set_xlabel('Duration (ms)')
+            ax.set_ylabel('Count')
+            ax.set_title(f"{recording_basename}  —  {osc_type}  (n={len(durations_ms)})")
+            fig.tight_layout()
+            fig.savefig(plots_dir / f"{recording_basename}_{osc_type}_durations.png",
+                        dpi=150, bbox_inches='tight')
+            plt.close(fig)

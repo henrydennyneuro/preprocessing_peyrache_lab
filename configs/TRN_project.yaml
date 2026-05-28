@@ -9,6 +9,7 @@
 #   - detect_oscillations           # Detect oscillatory events in the LFP
 #   - extract_waveform_parameters   # Extract waveform parameters
 #   - extract_AHV_tuning_parameters # extract information about neuron tuning to head turns
+#   - generate_plots                # Save verification plots to plots/ subdirectory
 
 # You must include the name as part of a hyphenated list under the "steps:" list.
 
@@ -16,11 +17,12 @@
 delete_dat: false
 
 steps:
-  - extract_inter_spike_intervals 
-  - extract_hd_tuning_parameters  
-  - detect_oscillations           
+  # - extract_inter_spike_intervals
+  # - extract_hd_tuning_parameters
+  # - detect_oscillations
   # - extract_waveform_parameters
-  - extract_AHV_tuning_parameters
+  # - extract_AHV_tuning_parameters
+  - generate_plots
 
 # List target folders below. These should be recordings that contain at least 1 shank in putative TRN.
 
