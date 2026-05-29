@@ -130,11 +130,19 @@ class PreprocessingPipeline:
 
         print(f"\n✓ Finished: {recording_basename}\n")
 
+    def _get_epoch(self, data, *keys):
+        """Case-insensitive epoch lookup across one or more candidate names."""
+        for key in keys:
+            for k in data.epochs.keys():
+                if k.upper() == key.upper():
+                    return data.epochs[k]
+        raise KeyError(f"Epoch {list(keys)} not found. Available: {list(data.epochs.keys())}")
+
     # Preprocessing Methods
     def extract_inter_spike_intervals(self, data, path_string, recording_basename):
         """Extract inter-spike intervals for all neurons."""
         spikes = data.spikes
-        sleep_ep = data.epochs['Sleep']
+        sleep_ep = self._get_epoch(data, 'Sleep')
         sleep_spikes = spikes.restrict(sleep_ep)
 
         median_isis = []
@@ -154,7 +162,7 @@ class PreprocessingPipeline:
         # Load data
         spikes = data.spikes
         position = data.position
-        wake_ep = data.epochs['Wake'].intersect(position.time_support)
+        wake_ep = self._get_epoch(data, 'Wake', 'Exploration').intersect(position.time_support)
 
         feature = position['ry']
 
@@ -221,7 +229,7 @@ class PreprocessingPipeline:
         # Load position and spikes
         position = data.position
         spikes = data.spikes
-        wake_ep = data.epochs['Wake'].intersect(position.time_support)
+        wake_ep = self._get_epoch(data, 'Wake', 'Exploration').intersect(position.time_support)
 
         # Compute Angular Head Velocity (AHV)
         timestamps = position.index.values
@@ -493,7 +501,16 @@ class PreprocessingPipeline:
         return tuning_curves_odd, tuning_curves_even, smooth_tuning_curves_odd, smooth_tuning_curves_even
 
     def detect_oscillations(self, data, path_string, recording_basename):
-        sws_ep = data.read_neuroscope_intervals('sws')
+        try:
+            sws_ep = data.read_neuroscope_intervals('sws')
+        except FileNotFoundError:
+            channel_files = [f for f in os.listdir(path_string) if f.endswith("_channel.txt")]
+            if channel_files:
+                print(f"No .sws.evt file found but channel files present "
+                      f"({', '.join(channel_files)}) — skipping oscillation detection.")
+            else:
+                print("No .sws.evt file found — skipping oscillation detection.")
+            return
 
         metadata_files = [f for f in os.listdir(path_string) if f.endswith("_channel.txt")]
         if not metadata_files:
@@ -667,19 +684,27 @@ class PreprocessingPipeline:
             print("AHV tuning curves not found — AHV panel will be omitted.")
             ahv_tc = None
 
-        locations = data.spikes.get_info('location').to_dict()
+        locations = {k: v.upper() for k, v in data.spikes.get_info('location').to_dict().items()}
         groups    = data.spikes.get_info('group').to_dict()
 
-        for region, cmap_name in [('ADn', 'Reds'), ('TRn', 'Purples')]:
-            region_neurons = [n for n in data.spikes.keys() if locations.get(n) == region]
+        found_any = False
+        for display_name, cmap_name in [('ADn', 'Reds'), ('TRn', 'Purples')]:
+            region_key = display_name.upper()
+            region_neurons = [n for n in data.spikes.keys() if locations.get(n) == region_key]
             if not region_neurons:
                 continue
+            found_any = True
             for shank in sorted({groups[n] for n in region_neurons}):
                 shank_neurons = sorted([n for n in region_neurons if groups[n] == shank])
                 self._plot_shank_figure(
                     shank_neurons, smooth_tc, mean_wf, max_ch, ahv_tc,
-                    region, shank, cmap_name, recording_basename, plots_dir,
+                    display_name, shank, cmap_name, recording_basename, plots_dir,
                 )
+
+        if not found_any:
+            unique_locs = sorted({v for v in locations.values() if v != '-'})
+            print(f"No ADn or TRn neurons found — skipping tuning/waveform plots "
+                  f"(locations present: {unique_locs or ['none']})")
 
     def _plot_shank_figure(self, neurons, smooth_tc, mean_wf, max_ch, ahv_tc,
                            region, shank, cmap_name, basename, plots_dir):
