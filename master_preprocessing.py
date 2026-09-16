@@ -19,6 +19,7 @@ supplied (all folders must share the same AnimalID prefix).
 OPTIONS
 -------
   --skip-sorting                          Pre-process only, do not launch sorter
+  --skip-sleep-score                      Skip LFP downsampling and sleep scoring (steps 7-8)
   --output-format {neurosuite,phy}        Spike sorting export format (default: neurosuite)
   --data-dir PATH                         Data directory (default: current working dir)
   --dry-run                               Print what would be done without doing it
@@ -40,6 +41,8 @@ PIPELINE STEPS
   5. Copy / merge auxiliary files (analogin, digitalin, auxiliary, video, csv)
   6. Copy XML parameter file, update <spikeDetection> nSamples etc.
   7. Run KiloSort 4 via SpikeSorter, export to Neurosuite or Phy
+  8. Process_LFPfromDat  →  AnimalID-YYMMDD.eeg
+  9. SleepScoreMaster    →  AnimalID-YYMMDD.SleepState.states.mat
 
 Author: ported from MasterPreProcessing_Intan25.m  (A. Peyrache 2017)
 Python port: auto-generated 2025
@@ -58,12 +61,13 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from pipeline.rename_copy import rename_copy_intan
-from pipeline.concatenate import concatenate_dat_files
-from pipeline.xml_tools   import load_xml, update_xml_spk_grps, generate_xml
-from pipeline.intan_info  import read_sample_rate
-from pipeline.epoch_ts    import build_epoch_ts
-from pipeline.file_utils  import move_ancillary_files
+from pipeline.rename_copy  import rename_copy_intan
+from pipeline.concatenate  import concatenate_dat_files
+from pipeline.xml_tools    import load_xml, update_xml_spk_grps, generate_xml
+from pipeline.intan_info   import read_sample_rate
+from pipeline.epoch_ts     import build_epoch_ts
+from pipeline.file_utils   import move_ancillary_files
+from pipeline.matlab_runner import run_lfp_sleep
 from pipeline import config as cfg
 
 
@@ -125,6 +129,9 @@ def parse_args():
                    help="AnimalID prefix (e.g. KMM43). Inferred automatically if omitted.")
     p.add_argument("--skip-sorting", action="store_true",
                    help="Pre-process only; do not launch spike sorter")
+    p.add_argument("--skip-sleep-score", action="store_true",
+                   help="Skip LFP downsampling (Process_LFPfromDat) and sleep scoring "
+                        "(SleepScoreMaster) — steps 8-9")
     p.add_argument("--output-format", choices=["neurosuite", "phy"],
                    default=cfg.DEFAULT_OUTPUT_FORMAT,
                    help=f"Spike sorting export format (default: {cfg.DEFAULT_OUTPUT_FORMAT})")
@@ -267,6 +274,7 @@ def main():
         print(f"  Scratch dir : {scratch_dir}")
     print(f"  Sample rate : {sample_rate} Hz  ({sr_source})")
     print(f"  Sorting     : {'SKIPPED' if args.skip_sorting else f'KiloSort 4 → {args.output_format}'}")
+    print(f"  LFP/sleep   : {'SKIPPED' if args.skip_sleep_score else 'Process_LFPfromDat + SleepScoreMaster'}")
     print(f"  Dry run     : {args.dry_run}")
     print(f"{'='*60}\n")
 
@@ -310,7 +318,7 @@ def main():
     os.chdir(data_dir)          # all relative paths in sub-modules are from here
 
     # ── Step 1: Rename, reorganise session folders ────────────────────────────
-    print("[1/6] Renaming and reorganising session folders...")
+    print("[1/8] Renaming and reorganising session folders...")
     rec_list, durations, merge_name = rename_copy_intan(
         animal_id, dry_run=args.dry_run, sample_rate=sample_rate)
 
@@ -321,12 +329,12 @@ def main():
     print(f"      Merge name     : {merge_name}")
 
     # ── Step 2: Build Epoch_TS.csv ────────────────────────────────────────────
-    print("\n[2/6] Building Epoch_TS.csv...")
+    print("\n[2/8] Building Epoch_TS.csv...")
     epoch_path = build_epoch_ts(durations, dry_run=args.dry_run)
     print(f"      Written: {epoch_path}")
 
     # ── Step 3: Concatenate .dat files ────────────────────────────────────────
-    print("\n[3/6] Concatenating .dat files...")
+    print("\n[3/8] Concatenating .dat files...")
     merged_dat = concatenate_dat_files(rec_list, merge_name, dry_run=args.dry_run)
     print(f"      Output : {merged_dat}")
 
@@ -337,14 +345,15 @@ def main():
     out_dir = data_dir if root_matches else data_dir / merge_name
 
     if root_matches:
-        print(f"\n[4/6] Root folder matches merge name — using it as output folder.")
+        print(f"\n[4/8] Root folder matches merge name — using it as output folder.")
     else:
-        print(f"\n[4/6] Creating output folder and moving ancillary files...")
+        print(f"\n[4/8] Creating output folder and moving ancillary files...")
         if not args.dry_run:
             out_dir.mkdir(exist_ok=True)
 
     move_ancillary_files(
         rec_list, merge_name, epoch_path,
+        out_dir=out_dir,
         dry_run=args.dry_run,
         keep_analogin=not args.no_analogin,
         keep_digitalin=not args.no_digitalin,
@@ -352,7 +361,7 @@ def main():
     )
 
     # ── Step 5: XML parameter file ────────────────────────────────────────────
-    print("\n[5/6] Resolving XML parameter file...")
+    print("\n[5/8] Resolving XML parameter file...")
     src_xml = Path(f"{rec_list[0]}.xml")
     dst_xml = out_dir / f"{merge_name}.xml"
 
@@ -409,9 +418,9 @@ def main():
 
     # ── Step 6: Launch SpikeSorter ────────────────────────────────────────────
     if args.skip_sorting:
-        print("\n[6/6] Spike sorting skipped (--skip-sorting flag).")
+        print("\n[6/8] Spike sorting skipped (--skip-sorting flag).")
     else:
-        print(f"\n[6/6] Running SpikeSorter (KiloSort 4 → {args.output_format})...")
+        print(f"\n[6/8] Running SpikeSorter (KiloSort 4 → {args.output_format})...")
         _run_spike_sorter(
             merge_name    = merge_name,
             data_dir      = out_dir,
@@ -420,6 +429,18 @@ def main():
             layout        = args.layout,
             site_spacing  = args.site_spacing,
             dry_run       = args.dry_run,
+        )
+
+    # ── Steps 7-8: LFP downsampling + sleep scoring ───────────────────────────
+    if args.skip_sleep_score:
+        print("\n[7/8] LFP downsampling skipped (--skip-sleep-score).")
+        print("[8/8] Sleep scoring skipped (--skip-sleep-score).")
+    else:
+        print(f"\n[7/8] Processing LFP from .dat  →  {merge_name}.eeg ...")
+        print(f"[8/8] Running SleepScoreMaster  →  {merge_name}.SleepState.states.mat ...")
+        run_lfp_sleep(
+            base_path = out_dir,
+            dry_run   = args.dry_run,
         )
 
     # ── Cleanup: remove intermediate per-session folders and flat files ───────

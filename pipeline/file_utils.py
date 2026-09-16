@@ -26,6 +26,7 @@ def move_ancillary_files(
     merge_name: str,
     epoch_path: Path,
     data_dir: Optional[Path] = None,
+    out_dir: Optional[Path] = None,
     dry_run: bool = False,
     keep_analogin: bool = True,
     keep_digitalin: bool = True,
@@ -40,6 +41,7 @@ def move_ancillary_files(
     merge_name     : name of the final output folder / file base
     epoch_path     : path to the already-generated Epoch_TS.csv
     data_dir       : working directory (default: cwd)
+    out_dir        : destination folder (default: data_dir / merge_name)
     dry_run        : if True, print without acting
     keep_analogin  : copy per-session analogin files into the merge folder
     keep_digitalin : copy per-session digitalin files into the merge folder
@@ -47,8 +49,8 @@ def move_ancillary_files(
     """
     if data_dir is None:
         data_dir = Path.cwd()
-
-    out_dir = data_dir / merge_name
+    if out_dir is None:
+        out_dir = data_dir / merge_name
 
     # ── Epoch_TS.csv ───────────────────────────────────────────────────────
     _move(epoch_path, out_dir / "Epoch_TS.csv", dry_run)
@@ -122,6 +124,8 @@ def _copy_if_exists(src: Path, dst: Path) -> None:
 def _move(src: Path, dst: Path, dry_run: bool) -> bool:
     if not src.exists():
         return False
+    if src.resolve() == dst.resolve():
+        return True
     if dry_run:
         print(f"    [dry] MOVE  {src.name}  →  {dst}")
         return True

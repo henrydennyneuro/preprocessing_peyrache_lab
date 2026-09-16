@@ -66,3 +66,20 @@ CONCAT_CHUNK_SAMPLES = 500_000
 # Path to the KiloSort 4 installation (conda env or git clone).
 # Leave as None to auto-detect from the active Python environment.
 KILOSORT4_PATH      = None
+
+# ── MATLAB integration (LFP + sleep scoring) ──────────────────────────────────
+# Path to the MATLAB executable.
+# Leave as None to auto-detect (checks PATH, then common install locations).
+# Example: r"C:\Program Files\MATLAB\R2024b\bin\matlab.exe"
+MATLAB_EXECUTABLE   = None
+
+# Toolbox roots passed to MATLAB's addpath(genpath(...)) before running scripts.
+# genpath is recursive, so only top-level folders are needed.
+MATLAB_TOOLBOX_PATHS = [
+    r"C:\Users\hdenny\Documents\Toolbox\ProcessIntanData",
+    r"C:\Users\hdenny\Documents\Toolbox\buzcode",
+]
+
+# LFP downsampling parameters passed to Process_LFPfromDat.
+# LFP_SAMPLE_RATE (target output Hz) is defined above under "Recording hardware".
+LFP_LO_PASS = 450   # Hz — lowpass cutoff before downsampling
