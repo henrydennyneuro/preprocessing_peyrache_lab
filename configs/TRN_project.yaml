@@ -21,7 +21,7 @@ steps:
   - extract_hd_tuning_parameters
   - detect_oscillations
   - extract_waveform_parameters
-  - extract_AHV_tuning_parameters
+  # - extract_AHV_tuning_parameters  # Retired 260923: AHV now computed by reticular_nucleus_physiology_project/AHVTuningCurves.py (would overwrite its CSVs)
   - generate_plots
 
 # List target folders below. These should be recordings that contain at least 1 shank in putative TRN.
