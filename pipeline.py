@@ -13,7 +13,10 @@ import pynapple as nap
 import nwbmatic as ntm
 from pathlib import Path
 from scipy.signal import butter, lfilter, filtfilt, hilbert
-from scipy.optimize import curve_fit
+
+from preprocessing_pipeline.kinematics import TrackedWake
+from preprocessing_pipeline import tuning_curves as tuning
+from preprocessing_pipeline import self_motion_metrics as motion
 
 warnings.filterwarnings('ignore', category=FutureWarning, module='pynapple')
 warnings.filterwarnings('ignore', message='Some starts and ends are equal', category=UserWarning)
@@ -63,12 +66,15 @@ def detect_oscillatory_events_hilbert(lfp, epoch, freq_band, thres_band, duratio
 
 
 _STEP_LABELS = {
-    'extract_firing_properties':     'Firing properties',
-    'extract_hd_tuning_parameters':  'HD tuning parameters',
-    'extract_AHV_tuning_parameters': 'AHV tuning parameters',
-    'detect_oscillations':           'Oscillation detection',
-    'extract_waveform_parameters':   'Waveform parameters',
-    'generate_plots':                'Generate plots',
+    'extract_firing_properties':       'Firing properties',
+    'extract_hd_tuning_parameters':    'HD tuning parameters',
+    'extract_kinematics':              'Kinematics',
+    'extract_speed_tuning_parameters': 'Speed tuning parameters',
+    'extract_AHV_tuning_parameters':   'AHV tuning parameters',
+    'extract_hd_information_metrics':  'HD information metrics',
+    'detect_oscillations':             'Oscillation detection',
+    'extract_waveform_parameters':     'Waveform parameters',
+    'generate_plots':                  'Generate plots',
 }
 
 # Steps that only need LFP (.eeg) and neuroscope event (.evt) files, and so can
@@ -299,68 +305,77 @@ class PreprocessingPipeline:
             df.to_csv(os.path.join(path_string, f"{recording_basename}_{name}.csv"))
 
 
+    def _get_tracked_wake(self, path_string, recording_basename):
+        """
+        Kinematics shared by the speed, AHV and HD-information steps
+        (preprocessing_pipeline/kinematics.py), computed once per recording from
+        the session NWB. Returns None (and says so) if the session has no head
+        direction, wake epoch or usable tracking in wake.
+        """
+        cached = getattr(self, "_tracked_wake", None)
+        if cached is None or cached[0] != recording_basename:
+            nwb_path = path_string / "pynapplenwb" / f"{recording_basename}.nwb"
+            self._tracked_wake = (recording_basename, TrackedWake.load(nwb_path))
+        kin = self._tracked_wake[1]
+        if kin is None:
+            print("  Skipped — no head direction, wake epoch or usable tracking in wake.")
+        return kin
+
+    def extract_kinematics(self, data, path_string, recording_basename):
+        """
+        Saves the tracked-wake kinematics every tuning step uses, as a pynapple
+        TsdFrame ({basename}_Kinematics.npz, read back with nap.load_file):
+        hd (rad), ahv (deg/s, CCW > 0), speed (cm/s), frozen (0/1), on the
+        edge-trimmed tracking frames, time_support = the contiguous chunks.
+        """
+        kin = self._get_tracked_wake(path_string, recording_basename)
+        if kin is None:
+            return
+        kin.as_tsdframe().save(str(path_string / f"{recording_basename}_Kinematics.npz"))
+
+    def extract_speed_tuning_parameters(self, data, path_string, recording_basename):
+        """
+        Running-speed tuning curves (2 cm/s bins, 0-30 cm/s; full, halves,
+        alternating 10 s blocks; < 0.5 s occupancy -> NaN) and per-unit speed
+        metrics ({basename}_Speed_Tuning_Properties.csv, all units). See
+        preprocessing_pipeline/tuning_curves.py and self_motion_metrics.py.
+        """
+        kin = self._get_tracked_wake(path_string, recording_basename)
+        if kin is None:
+            return
+        tuning.compute_and_save_splits(kin.units, kin.speed, tuning.SPEED_EDGES, kin.fs, "speed_cm_s",
+                                       path_string, recording_basename, "Speed_Tuning_Curves", "Speed_occupancy")
+        motion.speed_unit_metrics(kin, path_string, recording_basename).to_csv(
+            path_string / f"{recording_basename}_Speed_Tuning_Properties.csv", index=False)
+
     def extract_AHV_tuning_parameters(self, data, path_string, recording_basename):
-        """Extracts and saves AHV tuning parameters, cross-validation results, and quadratic fit properties."""
-        # Load position and spikes
-        position = data.position
-        spikes = data.spikes
-        wake_ep = self._get_epoch(data, 'Wake', 'Exploration', 'SoundExploration').intersect(position.time_support)
+        """
+        AHV tuning curves (Taube-style smoothed AHV; 6 deg/s bins over
+        -204..+204 deg/s, CW < 0 < CCW; full, halves, alternating 10 s blocks;
+        < 0.5 s occupancy -> NaN; index 'ahv_deg_s') and per-unit AHV metrics
+        ({basename}_AHV_Tuning_Properties.csv, all units). Replaces the old
+        raw-difference, +/-50 deg/s step and its _AHV_fit.csv (260929).
+        """
+        kin = self._get_tracked_wake(path_string, recording_basename)
+        if kin is None:
+            return
+        tuning.compute_and_save_splits(kin.units, kin.ahv, tuning.AHV_EDGES, kin.fs, "ahv_deg_s",
+                                       path_string, recording_basename, "AHV_Tuning_Curves", "AHV_occupancy")
+        motion.ahv_unit_metrics(kin, path_string, recording_basename).to_csv(
+            path_string / f"{recording_basename}_AHV_Tuning_Properties.csv", index=False)
 
-        # Compute Angular Head Velocity (AHV)
-        timestamps = position.index.values
-        head_direction = position['ry'].values  # Ensure correct column name
-        dt = np.diff(timestamps)
-        circular_diff_hd = np.angle(np.exp(1j * np.diff(head_direction)))
-        ahv = circular_diff_hd / dt
-
-        # Convert to Pynapple Tsd
-        ahv_tsd = nap.Tsd(t=timestamps[1:], d=ahv)
-
-        feature = ahv_tsd
-
-        # Compute raw AHV tuning curves
-        ahv_minmax = (-50 * np.pi / 180, 50 * np.pi / 180)
-        tuning_curves = nap.compute_tuning_curves(
-            data=spikes, features=feature, epochs=wake_ep, bins=30, range=[ahv_minmax],
-            return_pandas=True,
-        )
-
-        # Cross-validation
-        tuning_curves_1st_half, tuning_curves_2nd_half, _, _ = self.cross_validate_tuning_curves(
-            wake_ep, feature, spikes, position)
-        tuning_curves_odd_bins, tuning_curves_even_bins, _, _ = self.cross_validate_alternating_bins(
-            wake_ep, feature, spikes, position)
-
-        # Fit quadratic models and compute asymmetry index
-        ahv_bins = tuning_curves.index.values
-        results = []
-        
-        for neuron in tuning_curves.columns:
-            firing_rates = tuning_curves[neuron].values
-            popt, _ = curve_fit(lambda x, a, b, c: a*x**2 + b*x + c, ahv_bins, firing_rates)
-            a, b, c = popt
-
-            pos_firing = sum(firing_rates[ahv_bins > 0])
-            neg_firing = sum(firing_rates[ahv_bins < 0])
-            with np.errstate(invalid='ignore', divide='ignore'):
-                asymmetry_index = (pos_firing - neg_firing) / (pos_firing + neg_firing)
-            results.append([a, b, c, asymmetry_index])
-
-        n_nan = sum(np.isnan(r[3]) for r in results)
-        if n_nan > 0:
-            print(f"Warning: {n_nan}/{len(results)} neurons have NaN asymmetry index.")
-
-        # Save data
-        for name, df in {
-            'AHV_Tuning_Curves': tuning_curves,
-            'AHV_Tuning_Curves_1st_half': tuning_curves_1st_half,
-            'AHV_Tuning_Curves_2nd_half': tuning_curves_2nd_half,
-            'AHV_Tuning_Curves_odd_bins': tuning_curves_odd_bins,
-            'AHV_Tuning_Curves_even_bins': tuning_curves_even_bins,
-        }.items():
-            df.to_csv(os.path.join(path_string, f"{recording_basename}_{name}.csv"))
-        pd.DataFrame(results, columns=['a', 'b', 'c', 'asymmetry_index']).to_csv(
-            os.path.join(path_string, f"{recording_basename}_AHV_fit.csv"), index=False)
+    def extract_hd_information_metrics(self, data, path_string, recording_basename):
+        """
+        Per-unit HD information over tracked wake ({basename}_HD_Information_Metrics.csv,
+        all units): raw and shuffle-corrected information, split-half r, CV EV,
+        movement-predicted information, hd_cell, curve shape, thinned information.
+        Complements (does not replace) _HDTuning_Properties.csv.
+        """
+        kin = self._get_tracked_wake(path_string, recording_basename)
+        if kin is None:
+            return
+        motion.hd_unit_metrics(kin, recording_basename).to_csv(
+            path_string / f"{recording_basename}_HD_Information_Metrics.csv", index=False)
 
     def extract_waveform_parameters(self, data, path_string, recording_basename):
         """Extract waveform parameters for all neurons."""
@@ -732,7 +747,25 @@ class PreprocessingPipeline:
         plots_dir = path_string / "plots"
         plots_dir.mkdir(exist_ok=True)
         self._plot_hd_tuning_waveforms(data, path_string, recording_basename, plots_dir)
+        self._plot_self_motion_tuning(data, path_string, recording_basename, plots_dir)
         self._plot_oscillation_durations(path_string, recording_basename, plots_dir)
+
+    def _plot_self_motion_tuning(self, data, path_string, recording_basename, plots_dir):
+        """Per-region speed and AHV tuning grids (ADn, TRN), redrawn from the curve CSVs."""
+        for name, occupancy_name, plot in (("Speed_Tuning_Curves", "Speed_occupancy", tuning.plot_speed_by_region),
+                                           ("AHV_Tuning_Curves", "AHV_occupancy", tuning.plot_ahv_by_region)):
+            tc_path = path_string / f"{recording_basename}_{name}.csv"
+            occ_path = path_string / f"{recording_basename}_{occupancy_name}.csv"
+            if not (tc_path.exists() and occ_path.exists()):
+                print(f"{name} plot skipped — {tc_path.name} or {occ_path.name} not found.")
+                continue
+            if data.spikes is None:
+                print(f"{name} plot skipped — no pynapplenwb/*.nwb to read unit locations from.")
+                continue
+            tc = pd.read_csv(tc_path, index_col=0)
+            tc.columns = tc.columns.astype(int)
+            occ_s = pd.read_csv(occ_path, index_col=0)["full"].values
+            plot(tc, tuning.unit_locations(data.spikes), occ_s, recording_basename, plots_dir)
 
     def _plot_hd_tuning_waveforms(self, data, path_string, recording_basename, plots_dir):
         smooth_tc_path = path_string / f"{recording_basename}_HDTuning_Curves_smooth.csv"
@@ -822,7 +855,9 @@ class PreprocessingPipeline:
             if ahv_tc is not None:
                 ax_ahv = fig.add_subplot(gs[row, col * panels + 1])
                 if neuron in ahv_tc.columns:
-                    x_degs = ahv_tc.index.values * (180.0 / np.pi)
+                    # extract_AHV_tuning_parameters writes deg/s (index 'ahv_deg_s'); pre-260929 CSVs were rad/s
+                    x_degs = ahv_tc.index.values if ahv_tc.index.name == 'ahv_deg_s' \
+                        else ahv_tc.index.values * (180.0 / np.pi)
                     ax_ahv.plot(x_degs, ahv_tc[neuron].values,
                                 linewidth=1.0, color=cmap(0.7))
                     ax_ahv.axvline(0, color='gray', linewidth=0.5, linestyle='--')
