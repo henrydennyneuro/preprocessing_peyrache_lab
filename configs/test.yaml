@@ -4,7 +4,7 @@
 delete_dat: false
 
 steps:
-#  - extract_inter_spike_intervals  # Extract inter-spike intervals
+#  - extract_firing_properties      # Extract ISI and firing rate statistics
 #  - extract_hd_tuning_parameters  # Compute head direction tuning parameters
   - detect_oscillations            # Detect oscillatory events in the LFP
 #  - extract_waveform_parameters   # Extract waveform parameters

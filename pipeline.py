@@ -63,13 +63,42 @@ def detect_oscillatory_events_hilbert(lfp, epoch, freq_band, thres_band, duratio
 
 
 _STEP_LABELS = {
-    'extract_inter_spike_intervals': 'Inter-spike intervals',
+    'extract_firing_properties':     'Firing properties',
     'extract_hd_tuning_parameters':  'HD tuning parameters',
     'extract_AHV_tuning_parameters': 'AHV tuning parameters',
     'detect_oscillations':           'Oscillation detection',
     'extract_waveform_parameters':   'Waveform parameters',
     'generate_plots':                'Generate plots',
 }
+
+# Steps that only need LFP (.eeg) and neuroscope event (.evt) files, and so can
+# run against _LightweightLFPSession instead of a full nwbmatic session.
+_LFP_ONLY_STEPS = {'detect_oscillations', 'generate_plots'}
+
+
+class _LightweightLFPSession:
+    """
+    Minimal stand-in for an ntm.load_session(..., "neurosuite") session, used
+    when the requested steps only need LFP/event-file access (e.g. ripple
+    detection). Reads .eeg/.evt files directly instead of going through
+    nwbmatic's NeuroSuite/BaseLoader, which otherwise launches interactive
+    Tkinter GUIs (tracking setup, then electrode-group labeling) and builds a
+    pynapplenwb/*.nwb file the first time a session is loaded — none of which
+    is needed just to detect ripples.
+    """
+    def __init__(self, path):
+        self.path = str(path)
+        self.basename = os.path.basename(self.path)
+
+    def load_lfp(self, channel, extension=".eeg"):
+        filepath = os.path.join(self.path, f"{self.basename}{extension}")
+        return ntm.load_eeg(filepath, channel=channel)
+
+    def read_neuroscope_intervals(self, name):
+        path2file = os.path.join(self.path, f"{self.basename}.{name}.evt")
+        tmp = np.genfromtxt(path2file)[:, 0]
+        df = tmp.reshape(len(tmp) // 2, 2)
+        return nap.IntervalSet(df[:, 0], df[:, 1], time_units="ms")
 
 
 class PreprocessingPipeline:
@@ -106,8 +135,13 @@ class PreprocessingPipeline:
         print(f"  Path      : {path_string}")
         print(f"{'='*60}")
 
-        # Load session data
-        data = ntm.load_session(directory, "neurosuite")
+        # Load session data. If every requested step only needs LFP/event-file
+        # access, skip nwbmatic's interactive GUI + NWB creation entirely.
+        if set(steps) <= _LFP_ONLY_STEPS:
+            data = _LightweightLFPSession(directory)
+            print("  Loader    : lightweight (LFP/.evt only, no NWB creation)")
+        else:
+            data = ntm.load_session(directory, "neurosuite")
 
         # Dynamically call specified steps
         n_steps = len(steps)
@@ -131,29 +165,60 @@ class PreprocessingPipeline:
         print(f"\n✓ Finished: {recording_basename}\n")
 
     def _get_epoch(self, data, *keys):
-        """Case-insensitive epoch lookup across one or more candidate names."""
-        for key in keys:
-            for k in data.epochs.keys():
-                if k.upper() == key.upper():
-                    return data.epochs[k]
-        raise KeyError(f"Epoch {list(keys)} not found. Available: {list(data.epochs.keys())}")
+        """
+        Case-insensitive epoch lookup across one or more candidate names.
+        If more than one candidate matches (e.g. a session split into
+        'Sleep1'/'Sleep2'), the matching epochs are merged into one IntervalSet.
+        """
+        matches = [
+            data.epochs[k]
+            for key in keys
+            for k in data.epochs.keys()
+            if k.upper() == key.upper()
+        ]
+        if not matches:
+            raise KeyError(f"Epoch {list(keys)} not found. Available: {list(data.epochs.keys())}")
+        merged = matches[0]
+        for m in matches[1:]:
+            merged = merged.union(m)
+        return merged
 
     # Preprocessing Methods
-    def extract_inter_spike_intervals(self, data, path_string, recording_basename):
-        """Extract inter-spike intervals for all neurons."""
+    def extract_firing_properties(self, data, path_string, recording_basename):
+        """Extract ISI and firing rate statistics for all neurons."""
         spikes = data.spikes
-        sleep_ep = self._get_epoch(data, 'Sleep')
-        sleep_spikes = spikes.restrict(sleep_ep)
 
-        median_isis = []
-        median_sleep_isis = []
+        session_isis  = [self.calculate_mean_isi(spikes[n].times()) for n in spikes]
+        session_rates = [spikes[n].rate for n in spikes]
 
-        for neuron in spikes:
-            median_isis.append(self.calculate_mean_isi(spikes[neuron].times()))
-            median_sleep_isis.append(self.calculate_mean_isi(sleep_spikes[neuron].times()))
+        try:
+            sleep_ep     = self._get_epoch(data, 'Sleep', 'Sleep1', 'Sleep2')
+            sleep_spikes = spikes.restrict(sleep_ep)
+            sleep_isis   = [self.calculate_mean_isi(sleep_spikes[n].times()) for n in spikes]
+            sleep_rates  = [sleep_spikes[n].rate for n in spikes]
+        except KeyError:
+            print("  Warning: Sleep epoch not found — median_sleep_isi and sleep_rate will be NaN.")
+            sleep_isis  = [np.nan] * len(spikes)
+            sleep_rates = [np.nan] * len(spikes)
 
-        pd.DataFrame({'median_isi': median_isis, 'median_sleep_isi': median_sleep_isis}).to_csv(
-            os.path.join(path_string, f"{recording_basename}_inter_spike_intervals.csv"), index=False)
+        try:
+            exploration_ep     = self._get_epoch(data, 'Wake', 'Exploration', 'SoundExploration')
+            exploration_spikes = spikes.restrict(exploration_ep)
+            exploration_rates  = [exploration_spikes[n].rate for n in spikes]
+        except KeyError:
+            print("  Warning: Wake/Exploration epoch not found — exploration_rate will be NaN.")
+            exploration_rates = [np.nan] * len(spikes)
+
+        pd.DataFrame({
+            'median_isi':       session_isis,
+            'median_sleep_isi': sleep_isis,
+            'session_rate':     session_rates,
+            'sleep_rate':       sleep_rates,
+            'exploration_rate': exploration_rates,
+        }).to_csv(
+            os.path.join(path_string, f"{recording_basename}_firing_properties.csv"),
+            index=False,
+        )
 
     def extract_hd_tuning_parameters(self, data, path_string, recording_basename):
         """
@@ -162,7 +227,7 @@ class PreprocessingPipeline:
         # Load data
         spikes = data.spikes
         position = data.position
-        wake_ep = self._get_epoch(data, 'Wake', 'Exploration').intersect(position.time_support)
+        wake_ep = self._get_epoch(data, 'Wake', 'Exploration', 'SoundExploration').intersect(position.time_support)
 
         feature = position['ry']
 
@@ -229,7 +294,7 @@ class PreprocessingPipeline:
         # Load position and spikes
         position = data.position
         spikes = data.spikes
-        wake_ep = self._get_epoch(data, 'Wake', 'Exploration').intersect(position.time_support)
+        wake_ep = self._get_epoch(data, 'Wake', 'Exploration', 'SoundExploration').intersect(position.time_support)
 
         # Compute Angular Head Velocity (AHV)
         timestamps = position.index.values
@@ -596,6 +661,11 @@ class PreprocessingPipeline:
             # Save CSV
             osc_ep.as_dataframe().to_csv(
                 os.path.join(path_string, f"{recording_basename}_{oscillation_type}_ep.csv"))
+
+            pd.DataFrame({
+                'time': osc_tsd.index.values,
+                'peak_amplitude': osc_tsd.values,
+            }).to_csv(os.path.join(path_string, f"{recording_basename}_{oscillation_type}_tsd.csv"), index=False)
 
             # Save .evt file for Neuroscope (start / peak / stop)
             starts = osc_ep.as_units('ms')['start'].values
