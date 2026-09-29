@@ -89,6 +89,16 @@ class _LightweightLFPSession:
     def __init__(self, path):
         self.path = str(path)
         self.basename = os.path.basename(self.path)
+        self._spikes = None
+
+    @property
+    def spikes(self):
+        """Units from an existing pynapplenwb/*.nwb (for generate_plots), or None if it has not been built yet."""
+        if self._spikes is None:
+            nwb_path = os.path.join(self.path, "pynapplenwb", f"{self.basename}.nwb")
+            if os.path.exists(nwb_path):
+                self._spikes = nap.load_file(nwb_path)["units"]
+        return self._spikes
 
     def load_lfp(self, channel, extension=".eeg"):
         filepath = os.path.join(self.path, f"{self.basename}{extension}")
@@ -733,6 +743,9 @@ class PreprocessingPipeline:
             if not p.exists():
                 print(f"Tuning/waveform plot skipped — {p.name} not found.")
                 return
+        if data.spikes is None:
+            print("Tuning/waveform plot skipped — no pynapplenwb/*.nwb to read unit locations from.")
+            return
 
         smooth_tc = pd.read_csv(smooth_tc_path, index_col=0)
         smooth_tc.columns = pd.to_numeric(smooth_tc.columns, errors='coerce').round().astype(int)
