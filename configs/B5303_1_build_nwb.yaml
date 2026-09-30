@@ -1,0 +1,27 @@
+# B5303 regeneration, PASS 1 of 2: build the NWBs (updated 260930).
+# nwbmatic opens its setup GUIs (tracking, then electrode-group labels) the first
+# time each session is loaded. Run either
+#     python CheckNWB.py configs\B5303_1_build_nwb.yaml       (load only)
+# or  python main.py --config configs\B5303_1_build_nwb.yaml  (load + firing properties)
+# so the GUIs for all sessions come one after another; pass 2
+# (B5303_2_full.yaml) then runs unattended. Keep delete_dat false here:
+# waveform extraction in pass 2 needs the .dat (and nwbmatic would silently read
+# the analogin .dat if the main one were gone).
+# Curation audit 260930 (clu vs OriginalClus, clu/res consistency): the sessions
+# below are curated on every shank and have consistent clu/res files.
+
+delete_dat: false
+
+steps:
+  - extract_firing_properties
+
+files:
+  - E:/B5303/B5303-251008
+  - E:/B5303/B5303-251010   # re-curated 260929 (108 -> 64 units)
+  - E:/B5303/B5303-251014   # re-curated 260929 (119 -> 80 units)
+  - E:/B5303/B5303-251016   # re-curated 260929 (104 -> 70 units)
+  - E:/B5303/B5303-251021   # clu.5 curated 260930 (26 -> 21 units; xml spike group 5 restored to 8 ch, backup .xml.bak_260930)
+  - E:/B5303/B5303-251027
+  - E:/B5303/B5303-251028
+  - E:/B5303/B5303-251029   # clu.3 re-curated 260930 (was truncated; 26 -> 19 units)
+  - E:/B5303/B5303-251030

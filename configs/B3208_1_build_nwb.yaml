@@ -1,0 +1,17 @@
+# B3208 re-curation rebuild, PASS 1 of 2 (261001): build the NWBs (nwbmatic GUIs).
+# Move each session's old pynapplenwb folder aside first, or nwbmatic will just
+# load the old NWB. Run:  python CheckNWB.py configs\B3208_1_build_nwb.yaml
+# Labels (from the old NWBs): 240620 groups 0 '-', 1-3 ADn, 4-5 '-', 6 no units,
+# 7 TRN; epochs Sleep 0-7770, Wake 7770-8664 s. 240608 groups 0 '-', 1 no units,
+# 2-3 ADn, 4 '-', 5 no units (all noise after re-curation), 6-7 TRN; epochs
+# Sleep 0-12210, Wake 12210-13441 s.
+# .dat files restored from Hypernova 261001 — keep delete_dat false.
+
+delete_dat: false
+
+steps:
+  - extract_firing_properties
+
+files:
+  - D:/B3200/B3208/B3208-240620   # re-curated clu.4 (ADn), clu.5, clu.6
+  - D:/B3200/B3208/B3208-240608   # re-curated clu.7 (TRN), clu.1, clu.6

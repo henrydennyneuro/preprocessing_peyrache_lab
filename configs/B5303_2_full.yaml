@@ -1,0 +1,32 @@
+# B5303 regeneration, PASS 2 of 2 (260929): every TRN_project step, unattended.
+# Run after B5303_1_build_nwb.yaml has created pynapplenwb/<session>.nwb for each
+# session (no GUIs then). Same steps as configs/TRN_project.yaml.
+# detect_oscillations will print "No oscillation channel files found" — B5303 has
+# no ripple_channel.txt (it was never in the ripple set).
+# delete_dat: the raw .dat files also exist on
+# \\HypernovaPeyra\Hypernova2_Data\Megan\B5300\B5303, so true is recoverable;
+# left false to be safe.
+
+delete_dat: false
+
+steps:
+  - extract_firing_properties
+  - extract_hd_tuning_parameters
+  - extract_kinematics
+  - extract_speed_tuning_parameters
+  - extract_AHV_tuning_parameters
+  - extract_hd_information_metrics
+  - detect_oscillations
+  - extract_waveform_parameters
+  - generate_plots
+
+files:
+  # - E:/B5303/B5303-251008   # done 261001 (all steps completed before the print crash)
+  - E:/B5303/B5303-251010
+  - E:/B5303/B5303-251014
+  - E:/B5303/B5303-251016
+  - E:/B5303/B5303-251021   # clu.5 curated 260930 (26 -> 21 units; xml spike group 5 restored to 8 ch, backup .xml.bak_260930)
+  - E:/B5303/B5303-251027
+  - E:/B5303/B5303-251028
+  - E:/B5303/B5303-251029   # clu.3 re-curated 260930 (was truncated; 26 -> 19 units)
+  - E:/B5303/B5303-251030
