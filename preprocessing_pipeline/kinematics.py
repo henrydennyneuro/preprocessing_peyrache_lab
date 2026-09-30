@@ -43,6 +43,7 @@ def load_wake_hd(nwb_path):
     """
     data = nap.load_file(str(nwb_path))
     if "ry" not in data.keys():
+        data.close()
         return None
     # nap.load_file merges tracking segments into one time_support; use the stored one
     tracking_ep = data["position_time_support"] if "position_time_support" in data.keys() \
@@ -50,6 +51,7 @@ def load_wake_hd(nwb_path):
     epochs = data["epochs"]
     is_wake = np.array([any(k in str(tag).lower() for k in WAKE_KEYWORDS) for tag in epochs.tags])
     if not is_wake.any():
+        data.close()
         return None
     wake_ep = epochs[is_wake].intersect(tracking_ep)
     ry = data["ry"].restrict(wake_ep)
@@ -197,22 +199,27 @@ def heading_turn_corr(data, ry, fs):
 class TrackedWake:
     """
     Everything the tuning steps share for one session, computed once:
-      data, ry (tracked wake), wake_ep, fs     from load_wake_hd
+      units                                    spike times (TsGroup, in memory)
+      ry (tracked wake), wake_ep, fs           from load_wake_hd
       ahv, speed                               nap.Tsd (deg/s, cm/s) on the same
                                                edge-trimmed frames / time_support
       frozen                                   bool per frame (frozen_mask)
       hd                                       ry value at each frame (rad)
       frozen_frac                              fraction of zero HD steps
     Build with TrackedWake.load(nwb_path); returns None when the session has
-    no head direction, no wake epoch or no usable tracking in wake.
+    no head direction, no wake epoch or no usable tracking in wake. The NWB is
+    closed as soon as these are computed: pynapple reads position lazily and
+    keeps the file open otherwise, and a later step (detect_oscillations, via
+    nwbmatic) reopens the same file for writing.
     """
 
     def __init__(self, data, ry, wake_ep, fs, ahv, speed, frozen_frac):
-        self.data, self.ry, self.wake_ep, self.fs = data, ry, wake_ep, fs
+        self.ry, self.wake_ep, self.fs = ry, wake_ep, fs
         self.ahv, self.speed, self.frozen_frac = ahv, speed, frozen_frac
         assert np.array_equal(ahv.t, speed.t), "AHV and speed timestamps differ"
         self.hd = ry.values[np.searchsorted(ry.t, ahv.t)]
         self.frozen = frozen_mask(data, ahv.t)
+        self.units = data["units"]           # spike times are read into memory by pynapple
 
     @classmethod
     def load(cls, nwb_path):
@@ -220,15 +227,14 @@ class TrackedWake:
         if loaded is None:
             return None
         data, ry, wake_ep, fs = loaded
-        ahv, _, frozen_frac = compute_ahv(ry, fs)
-        speed = compute_speed(data, ry, fs)
-        if ahv is None or speed is None:
-            return None
-        return cls(data, ry, wake_ep, fs, ahv, speed, frozen_frac)
-
-    @property
-    def units(self):
-        return self.data["units"]
+        try:
+            ahv, _, frozen_frac = compute_ahv(ry, fs)
+            speed = compute_speed(data, ry, fs)
+            if ahv is None or speed is None:
+                return None
+            return cls(data, ry, wake_ep, fs, ahv, speed, frozen_frac)
+        finally:
+            data.close()
 
     def as_tsdframe(self):
         """hd (rad), ahv (deg/s, CCW > 0), speed (cm/s), frozen (0/1) on the tracked-wake frames."""
