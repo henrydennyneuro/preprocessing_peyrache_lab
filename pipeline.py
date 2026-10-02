@@ -17,6 +17,8 @@ from scipy.signal import butter, lfilter, filtfilt, hilbert
 from preprocessing_pipeline.kinematics import TrackedWake
 from preprocessing_pipeline import tuning_curves as tuning
 from preprocessing_pipeline import self_motion_metrics as motion
+from preprocessing_pipeline import unit_ids
+from preprocessing_pipeline import waveform_check
 
 warnings.filterwarnings('ignore', category=FutureWarning, module='pynapple')
 warnings.filterwarnings('ignore', message='Some starts and ends are equal', category=UserWarning)
@@ -66,6 +68,7 @@ def detect_oscillatory_events_hilbert(lfp, epoch, freq_band, thres_band, duratio
 
 
 _STEP_LABELS = {
+    'extract_unit_ids':                'Unit IDs',
     'extract_firing_properties':       'Firing properties',
     'extract_hd_tuning_parameters':    'HD tuning parameters',
     'extract_kinematics':              'Kinematics',
@@ -74,12 +77,15 @@ _STEP_LABELS = {
     'extract_hd_information_metrics':  'HD information metrics',
     'detect_oscillations':             'Oscillation detection',
     'extract_waveform_parameters':     'Waveform parameters',
+    'check_waveform_files':            'Waveform file check',
     'generate_plots':                  'Generate plots',
 }
 
-# Steps that only need LFP (.eeg) and neuroscope event (.evt) files, and so can
-# run against _LightweightLFPSession instead of a full nwbmatic session.
-_LFP_ONLY_STEPS = {'detect_oscillations', 'generate_plots'}
+# Steps that only need LFP (.eeg) and neuroscope event (.evt) files (or, for
+# extract_unit_ids / check_waveform_files, the clu/res/spk files, saved CSVs and
+# the existing NWB), and so can run against _LightweightLFPSession instead of a
+# full nwbmatic session.
+_LFP_ONLY_STEPS = {'detect_oscillations', 'generate_plots', 'extract_unit_ids', 'check_waveform_files'}
 
 
 class _LightweightLFPSession:
@@ -199,10 +205,32 @@ class PreprocessingPipeline:
             merged = merged.union(m)
         return merged
 
+    def _stamp_curve_splits(self, path_string, recording_basename, curves_name, ids, step):
+        """Stamp the wide curve files written by tuning.compute_and_save_splits (units as columns)."""
+        for suffix in tuning.SPLIT_SUFFIXES:
+            unit_ids.record_output(path_string, f"{recording_basename}_{curves_name}{suffix}.csv", ids, step)
+
+    def _save_unit_table(self, df, path, ids, path_string, step, unit_col="unit"):
+        """
+        Write a one-row-per-unit table with uid + spike_hash appended as the last
+        columns (matched on unit_col), and stamp it in _provenance.json.
+        """
+        unit_ids.tag(df, ids, unit_col).to_csv(path, index=False)
+        unit_ids.record_output(path_string, path, ids, step)
+
     # Preprocessing Methods
+    def extract_unit_ids(self, data, path_string, recording_basename):
+        """Stable unit IDs (clu file + cluster) and spike-train fingerprints, checked against the NWB."""
+        table = unit_ids.build_unit_ids(path_string)
+        table.to_csv(os.path.join(path_string, f"{recording_basename}_unit_ids.csv"), index=False)
+        n_out = int(table["n_outside_epochs"].sum())
+        print(f"  {len(table)} units on {table['clu'].nunique()} clu files; every NWB spike train "
+              f"matches its cluster" + (f" ({n_out} res spikes outside the epochs, not in the NWB)" if n_out else ""))
+
     def extract_firing_properties(self, data, path_string, recording_basename):
         """Extract ISI and firing rate statistics for all neurons."""
         spikes = data.spikes
+        ids = unit_ids.load_verified(path_string, spikes)
 
         session_isis  = [self.calculate_mean_isi(spikes[n].times()) for n in spikes]
         session_rates = [spikes[n].rate for n in spikes]
@@ -225,16 +253,15 @@ class PreprocessingPipeline:
             print("  Warning: Wake/Exploration epoch not found — exploration_rate will be NaN.")
             exploration_rates = [np.nan] * len(spikes)
 
-        pd.DataFrame({
+        self._save_unit_table(pd.DataFrame({
             'median_isi':       session_isis,
             'median_sleep_isi': sleep_isis,
             'session_rate':     session_rates,
             'sleep_rate':       sleep_rates,
             'exploration_rate': exploration_rates,
-        }).to_csv(
-            os.path.join(path_string, f"{recording_basename}_firing_properties.csv"),
-            index=False,
-        )
+            'unit':             list(spikes.keys()),
+        }), path_string / f"{recording_basename}_firing_properties.csv", ids, path_string,
+            "extract_firing_properties")
 
     def extract_hd_tuning_parameters(self, data, path_string, recording_basename):
         """
@@ -242,6 +269,7 @@ class PreprocessingPipeline:
         """
         # Load data
         spikes = data.spikes
+        ids = unit_ids.load_verified(path_string, spikes)
         position = data.position
         wake_ep = self._get_epoch(data, 'Wake', 'Exploration', 'SoundExploration').intersect(position.time_support)
 
@@ -278,8 +306,10 @@ class PreprocessingPipeline:
 
         explained_variance = self.calculate_explained_variance(spikes, position, wake_ep, smooth_tuning_curves)
 
-        # Save HD tuning properties
-        pd.DataFrame({
+        # Save HD tuning properties (rows in the order of the curve columns = unit ids)
+        if list(tuning_curves.columns) != list(spikes.keys()):
+            raise RuntimeError(f"{recording_basename}: HD tuning curve columns are not in unit order")
+        self._save_unit_table(pd.DataFrame({
             'mean_vector_real': np.real(mean_vector),
             'mean_vector_imag': np.imag(mean_vector),
             'mean_vector_length': mean_vector_length,
@@ -287,7 +317,9 @@ class PreprocessingPipeline:
             'preferred_direction': preferred_direction,
             'spatial_information': spatial_information.flatten(),
             'explained_variance': explained_variance,
-        }).to_csv(os.path.join(path_string, f"{recording_basename}_HDTuning_Properties.csv"), index=False)
+            'unit': list(spikes.keys()),
+        }), path_string / f"{recording_basename}_HDTuning_Properties.csv", ids, path_string,
+            "extract_hd_tuning_parameters")
 
         # Save HD tuning curves
         for name, df in {
@@ -302,7 +334,9 @@ class PreprocessingPipeline:
             'HDTuning_Curves_smooth_odd_bins': smooth_tuning_curves_odd_bins,
             'HDTuning_Curves_smooth_even_bins': smooth_tuning_curves_even_bins,
         }.items():
-            df.to_csv(os.path.join(path_string, f"{recording_basename}_{name}.csv"))
+            path = os.path.join(path_string, f"{recording_basename}_{name}.csv")
+            df.to_csv(path)
+            unit_ids.record_output(path_string, path, ids, "extract_hd_tuning_parameters")
 
 
     def _get_tracked_wake(self, path_string, recording_basename):
@@ -343,10 +377,14 @@ class PreprocessingPipeline:
         kin = self._get_tracked_wake(path_string, recording_basename)
         if kin is None:
             return
+        ids = unit_ids.load_verified(path_string, kin.units)
         tuning.compute_and_save_splits(kin.units, kin.speed, tuning.SPEED_EDGES, kin.fs, "speed_cm_s",
                                        path_string, recording_basename, "Speed_Tuning_Curves", "Speed_occupancy")
-        motion.speed_unit_metrics(kin, path_string, recording_basename).to_csv(
-            path_string / f"{recording_basename}_Speed_Tuning_Properties.csv", index=False)
+        self._stamp_curve_splits(path_string, recording_basename, "Speed_Tuning_Curves", ids,
+                                 "extract_speed_tuning_parameters")
+        self._save_unit_table(motion.speed_unit_metrics(kin, path_string, recording_basename),
+                              path_string / f"{recording_basename}_Speed_Tuning_Properties.csv", ids,
+                              path_string, "extract_speed_tuning_parameters")
 
     def extract_AHV_tuning_parameters(self, data, path_string, recording_basename):
         """
@@ -359,10 +397,14 @@ class PreprocessingPipeline:
         kin = self._get_tracked_wake(path_string, recording_basename)
         if kin is None:
             return
+        ids = unit_ids.load_verified(path_string, kin.units)
         tuning.compute_and_save_splits(kin.units, kin.ahv, tuning.AHV_EDGES, kin.fs, "ahv_deg_s",
                                        path_string, recording_basename, "AHV_Tuning_Curves", "AHV_occupancy")
-        motion.ahv_unit_metrics(kin, path_string, recording_basename).to_csv(
-            path_string / f"{recording_basename}_AHV_Tuning_Properties.csv", index=False)
+        self._stamp_curve_splits(path_string, recording_basename, "AHV_Tuning_Curves", ids,
+                                 "extract_AHV_tuning_parameters")
+        self._save_unit_table(motion.ahv_unit_metrics(kin, path_string, recording_basename),
+                              path_string / f"{recording_basename}_AHV_Tuning_Properties.csv", ids,
+                              path_string, "extract_AHV_tuning_parameters")
 
     def extract_hd_information_metrics(self, data, path_string, recording_basename):
         """
@@ -374,11 +416,25 @@ class PreprocessingPipeline:
         kin = self._get_tracked_wake(path_string, recording_basename)
         if kin is None:
             return
-        motion.hd_unit_metrics(kin, recording_basename).to_csv(
-            path_string / f"{recording_basename}_HD_Information_Metrics.csv", index=False)
+        ids = unit_ids.load_verified(path_string, kin.units)
+        self._save_unit_table(motion.hd_unit_metrics(kin, recording_basename),
+                              path_string / f"{recording_basename}_HD_Information_Metrics.csv", ids,
+                              path_string, "extract_hd_information_metrics")
 
     def extract_waveform_parameters(self, data, path_string, recording_basename):
-        """Extract waveform parameters for all neurons."""
+        """
+        Extract waveform parameters for all neurons. _max_ch.csv and
+        _waveform_parameters.csv get uid + spike_hash columns; all three files
+        are stamped in _provenance.json (_mean_wf.csv keeps channels as its only
+        data columns, which its readers rely on).
+        """
+        # nwbmatic reads "the first file with 'dat' in its name": make sure that is the raw .dat
+        dat_name = f"{recording_basename}.dat"
+        first = sorted(f for f in os.listdir(path_string) if "dat" in f and not f.startswith("."))
+        if not (path_string / dat_name).exists() or first[0] != dat_name:
+            raise RuntimeError(f"{recording_basename}: nwbmatic would extract waveforms from "
+                               f"{first[0] if first else 'no file'}, not {dat_name}")
+        ids = unit_ids.load_verified(path_string, data.spikes)
 
         mean_wf, max_ch = data.load_mean_waveforms()
         pd.concat(mean_wf, names=['neuron', 'time_s']).to_csv(
@@ -391,7 +447,25 @@ class PreprocessingPipeline:
 
         pd.Series(trough_to_peaks, name='trough_to_peak').to_csv(
             os.path.join(path_string, f"{recording_basename}_waveform_parameters.csv"))
+        waveform_check.tag_parameter_files(path_string, ids)
+        for suffix in waveform_check.WAVEFORM_FILES:
+            unit_ids.record_output(path_string, f"{recording_basename}{suffix}", ids, "extract_waveform_parameters")
         print()
+
+    def check_waveform_files(self, data, path_string, recording_basename):
+        """
+        Checks _mean_wf / _max_ch / _waveform_parameters against each unit's own
+        .spk snippets (preprocessing_pipeline/waveform_check.py) and saves
+        {basename}_waveform_check.csv (raw_vs_spk_r, status, checks), stamped.
+        """
+        ids = unit_ids.load_verified(path_string, data.spikes)
+        t, issues, notes, shift_ok = waveform_check.check_session(path_string)
+        s = waveform_check.summarize(recording_basename, t, issues, notes, shift_ok)
+        if len(t):
+            waveform_check.save_session(path_string, t, s["verdict"], ids)
+        print(f"  {s['verdict']}: {s['verified']} verified, {s['twin']} twin, {s['weak']} weak"
+              + (f"; issues: {s['issues']}" if s["issues"] else "")
+              + (f"; weak: {s['weak_units']}" if s["weak_units"] else ""))
 
     # Utility Methods
     def calculate_mean_isi(self, spike_times):
