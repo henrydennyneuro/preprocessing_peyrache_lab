@@ -1,0 +1,29 @@
+# 261001 rebuild after relabelling / re-curation, PASS 1 of 2: build the NWBs (nwbmatic GUIs).
+# Move each session's old pynapplenwb folder aside first (pynapplenwb_old_261001), or
+# nwbmatic will just load the old NWB. Run:  python CheckNWB.py configs\Rebuild_261001_1_build_nwb.yaml
+#
+# Labels to enter (GUI groups are numbered from 0; Henry's g1 = group 0 = clu.1):
+#   3209-240827, B3209-240828, B3209-240829  (histology, Henry 261001)
+#       group 0-1 '-' | group 2 TRN (borderline; narrow units only via t2p) | group 3-4 TRN |
+#       group 5-7 STR (striatum; excluded from Other thalamus)
+#   B3210-240911  group 0 CA1 | group 1 TRN (re-curated clu.2) | group 2-8 STR (striatum, histology 261001)
+#   B3212-241002  group 0 CA1 | group 1 '-' | group 2-4 TRN | group 5-8 STR (striatum, histology 261001;
+#                 re-curated clu.9 = group 8)
+#   B3208-240612  group 0 '-' | group 1-3 ADn | group 4-5 '-' | group 6-7 TRN  (labels unchanged;
+#                 rebuilt because its NWB predates the 2025-01-03 curation of clu.1)
+# Epochs as in the old NWBs (Sleep / Wake); B3208-240612's first Wake (7485-10292 s, tracking
+# failed) may be tagged 'junk' (Henry's convention), optional.
+# B3209-240830 EXCLUDED 261001. Raw .dat present for all but B3208-240612 -> delete_dat false.
+
+delete_dat: false
+
+steps:
+  - extract_firing_properties
+
+files:
+  - D:/B3200/B3209/3209-240827
+  - D:/B3200/B3209/B3209-240828
+  - D:/B3200/B3209/B3209-240829
+  - D:/B3200/B3210/B3210-240911
+  - D:/B3200/B3212/B3212-241002
+  - D:/B3200/B3208/B3208-240612

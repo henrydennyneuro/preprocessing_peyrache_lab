@@ -1,0 +1,21 @@
+# 261001 rebuild, PASS 2 of 2, B3208-240612 (NO raw .dat): every step except waveform
+# extraction. Its waveform rows are then carried over from the old files by uid + spike_hash
+# (all 52 units on groups 1-7 + the 5 surviving clu.1 clusters are unchanged spike trains),
+# followed by check_waveform_files.
+# Run:  python -u main.py --config configs\Rebuild_261001_2_no_dat.yaml
+
+delete_dat: false
+
+steps:
+  - extract_unit_ids
+  - extract_firing_properties
+  - extract_hd_tuning_parameters
+  - extract_kinematics
+  - extract_speed_tuning_parameters
+  - extract_AHV_tuning_parameters
+  - extract_hd_information_metrics
+  - detect_oscillations
+  - generate_plots
+
+files:
+  - D:/B3200/B3208/B3208-240612

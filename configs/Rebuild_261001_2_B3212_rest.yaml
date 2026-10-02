@@ -1,0 +1,15 @@
+# 261001 rebuild, PASS 2 remainder for B3212-241002: steps 1-8 (unit IDs ... oscillation
+# detection) already done; the run was stopped twice by Claude Code's low-memory reaper during
+# waveform extraction (53 GB .dat, 128 ch). Run this in a normal terminal, outside Claude Code:
+#   cd C:\Users\hdenny\Documents\Toolbox\preprocessing_peyrache_lab
+#   conda run --no-capture-output -n pyna_preprocessing python -u main.py --config configs\Rebuild_261001_2_B3212_rest.yaml
+
+delete_dat: false
+
+steps:
+  - extract_waveform_parameters
+  - check_waveform_files
+  - generate_plots
+
+files:
+  - D:/B3200/B3212/B3212-241002
